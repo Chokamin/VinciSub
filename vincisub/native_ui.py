@@ -48,8 +48,8 @@ def launch(resolve, fusion, bmd):
         {"ID": editor_id, "WindowTitle": "奇奇字幕 · 编辑字幕", "Geometry": [300, 220, 640, 220]},
         ui.VGroup([
             ui.HGroup({"Weight": 0}, [ui.Label({"Text": "开始 / 结束（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Start", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.DoubleSpinBox({"ID": "End", "Decimals": 3, "Minimum": 0, "Maximum": 1800})]),
-            ui.LineEdit({"ID": "Text", "PlaceholderText": "选择一条字幕后编辑文字", "Weight": 0}),
-            ui.Label({"ID": "EditStatus", "WordWrap": True}),
+            ui.TextEdit({"ID": "Text", "AcceptRichText": False, "PlaceholderText": "输入字幕文字", "MinimumSize": [0, 120], "Weight": 1}),
+            ui.Label({"ID": "EditStatus", "WordWrap": True, "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.Button({"ID": "CancelEdit", "Text": "取消"}), ui.Button({"ID": "Apply", "Text": "保存并同步"})]),
         ]))
     editor_items = editor.GetItems()
@@ -167,7 +167,7 @@ def launch(resolve, fusion, bmd):
         state["selected"] = index
         row = state["rows"][index]
         items["Start"].Value, items["End"].Value = row["start"], row["end"]
-        items["Text"].Text = row["text"]
+        items["Text"].PlainText = row["text"]
 
     def edit(event=None):
         if jobs.busy() or model_manager.busy() or state['placing']:
@@ -189,7 +189,7 @@ def launch(resolve, fusion, bmd):
         rows = [dict(row) for row in state["rows"]]
         index = state["selected"]
         if edit_row and index is not None:
-            rows[index] = dict(start=items["Start"].Value, end=items["End"].Value, text=items["Text"].Text)
+            rows[index] = dict(start=items["Start"].Value, end=items["End"].Value, text=items["Text"].PlainText)
         jobs.save(rows, jobs.result().get("offset", 0))
         state["rows"] = rows
         render_rows()
@@ -233,7 +233,7 @@ def launch(resolve, fusion, bmd):
             if state['selected'] is None:
                 raise ValueError('请先选择一条字幕。')
             jobs.directory = edit_job(state['catalog'],state['selected'],dict(
-                start=items['Start'].Value,end=items['End'].Value,text=items['Text'].Text),jobs.data)
+                start=items['Start'].Value,end=items['End'].Value,text=items['Text'].PlainText),jobs.data)
             state['loaded'] = jobs.directory
             import_result()
             return

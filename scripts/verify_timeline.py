@@ -133,18 +133,18 @@ def main():
         time.sleep(.5)
         editor=ui.FindWindow('com.vincisub.native.editor')
         edit_widgets=editor.GetItems()
-        assert edit_widgets['Text'].Text == result['captions'][0]['text'], 'Subtitle row selection did not reach editor: '+str(widgets['Status'].Text)
+        assert edit_widgets['Text'].PlainText == result['captions'][0]['text'], 'Subtitle row selection did not reach editor: '+str(widgets['Status'].Text)
         assert not window.Enabled
-        edit_widgets['Text'].Text = '取消的修改不能保存'
+        edit_widgets['Text'].PlainText = '取消的修改不能保存'
         ui.QueueEvent(edit_widgets['CancelEdit'],'Clicked',{});time.sleep(.2)
         assert window.Enabled
         ui.QueueEvent(widgets['Captions'],'ItemDoubleClicked',{});time.sleep(.2)
-        assert edit_widgets['Text'].Text == result['captions'][0]['text']
+        assert edit_widgets['Text'].PlainText == result['captions'][0]['text']
         edit_widgets['End'].Value = 0
         ui.QueueEvent(edit_widgets['Apply'],'Clicked',{});time.sleep(.2)
         assert edit_widgets['EditStatus'].Text and not window.Enabled
         edit_widgets['End'].Value = result['captions'][0]['end']
-        edit_widgets['Text'].Text = '在插件里校对的字幕'
+        edit_widgets['Text'].PlainText = '在插件里校对的字幕'
         ui.QueueEvent(edit_widgets['Apply'],'Clicked',{})
         deadline = time.monotonic()+30
         while time.monotonic()<deadline:
@@ -232,7 +232,7 @@ def main():
         widgets['Captions'].TopLevelItem(0).Selected=True
         ui.QueueEvent(widgets['Captions'],'ItemDoubleClicked',{})
         time.sleep(.3)
-        edit_widgets['Text'].Text='从全部字幕列表修改'
+        edit_widgets['Text'].PlainText='从全部字幕列表修改'
         ui.QueueEvent(edit_widgets['Apply'],'Clicked',{})
         deadline=time.monotonic()+30
         while time.monotonic()<deadline:
