@@ -35,6 +35,11 @@ def edit_job(catalog, index, values, data):
     source = catalog['tracks'][track]
     captions = [dict(c) for c in source['captions']]
     captions[row['row_index']] = dict(values)
+    return track_job(catalog,track,captions,data)
+
+
+def track_job(catalog,track,captions,data):
+    source=catalog['tracks'][track]
     validate_captions(captions)
     result = dict(captions=captions,duration=catalog['duration'],offset=0)
     directory = Path(data)/'jobs'/uuid.uuid4().hex

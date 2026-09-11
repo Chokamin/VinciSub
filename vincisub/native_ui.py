@@ -5,7 +5,8 @@ import subprocess
 from pathlib import Path
 
 from .jobs import Jobs
-from .catalog import read_all, edit_job
+from .catalog import read_all, edit_job, track_job
+from .optimize_ui import OptimizeWindow
 from . import vocabulary, reference
 from .reference_ui import ReferenceWindow
 from .model_ui import ModelManager, DownloadWindow
@@ -40,7 +41,7 @@ def launch(resolve, fusion, bmd):
             ui.Button({"ID": "ReadAll", "Text": "读取全部字幕", "Weight": 0}),
             ui.Label({"ID": "Status", "WordWrap": True, "MinimumSize": [0, 45], "Weight": 0}),
             ui.Tree({"ID": "Captions", "Events": {"ItemClicked": True, "ItemDoubleClicked": True}, "ColumnCount": 5, "RootIsDecorated": False, "AlternatingRowColors": True}),
-            ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Export", "Text": "保存 SRT"}), ui.Button({"ID": "Import", "Text": "写入字幕轨"})]),
+            ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Optimize", "Text": "一键优化…"}), ui.Button({"ID": "Export", "Text": "保存 SRT"}), ui.Button({"ID": "Import", "Text": "写入字幕轨"})]),
             ui.Label({"Text": "识别完成后自动写入当前时间线的字幕轨。双击字幕打开编辑窗口，点击「保存并同步」刷新本次字幕轨。单条样式请在校对完成后调整。", "Weight": 0, "WordWrap": True}),
         ]))
     items = window.GetItems()
@@ -286,6 +287,26 @@ def launch(resolve, fusion, bmd):
         else:
             jobs.cancel()
 
+    def optimization_sources():
+        if jobs.busy() or model_manager.busy() or state['placing']:
+            raise ValueError('请等待当前任务完成。')
+        if state['catalog'] is not None:
+            return [dict(label=f"ST{track} · {source['name']}（整轨）",track=track,rows=[dict(row) for row in source['captions']])
+                    for track,source in state['catalog']['tracks'].items() if source['captions']]
+        return [dict(label='本次生成的字幕',track=None,rows=[dict(row) for row in state['rows']])] if state['rows'] else []
+
+    def apply_optimization(source,rows):
+        if source['track'] is not None:
+            jobs.directory=track_job(state['catalog'],source['track'],rows,jobs.data)
+            state['loaded']=jobs.directory
+        else:
+            jobs.save(rows,jobs.result().get('offset',0))
+            state['rows']=rows
+            render_rows()
+        import_result()
+
+    optimize_window=OptimizeWindow(ui,dispatcher,window,optimization_sources,apply_optimization)
+
     download_window = DownloadWindow(ui,dispatcher,model_manager.cancel)
 
     def poll(event=None):
@@ -293,12 +314,12 @@ def launch(resolve, fusion, bmd):
         model_manager.poll()
         download_window.update(download_status,model_manager.tick)
         if model_manager.busy():
-            for key in ['Generate','ReferenceScript','VocabularySettings','ReadAll','Track','Refresh','Model','Chars','Apply','Export','Import']:
+            for key in ['Optimize','Generate','ReferenceScript','VocabularySettings','ReadAll','Track','Refresh','Model','Chars','Apply','Export','Import']:
                 items[key].Enabled = False
             items['Cancel'].Enabled = True
             return
         if state['placing']:
-            for key in ['Generate', 'ReferenceScript', 'VocabularySettings', 'ReadAll', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End']:
+            for key in ['Optimize', 'Generate', 'ReferenceScript', 'VocabularySettings', 'ReadAll', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End']:
                 items[key].Enabled = False
             items['Cancel'].Enabled = True
             path = jobs.directory/'placement.json'
@@ -317,7 +338,7 @@ def launch(resolve, fusion, bmd):
             items["Status"].Text = status["message"]
             state["status"] = signature
         busy = jobs.busy()
-        for key in ["Generate", "ReferenceScript", "VocabularySettings", "ReadAll", "Track", "Refresh", "Model", "Chars"]:
+        for key in ["Optimize", "Generate", "ReferenceScript", "VocabularySettings", "ReadAll", "Track", "Refresh", "Model", "Chars"]:
             items[key].Enabled = not busy
         items["Cancel"].Enabled = busy
         if not busy:
@@ -361,7 +382,7 @@ def launch(resolve, fusion, bmd):
         save()
         dispatcher.ExitLoop()
 
-    for key, callback in {"ReferenceScript": reference_window.open, "ModelManager": model_manager.open, "VocabularySettings": open_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Export": export, "Import": import_result}.items():
+    for key, callback in {"Optimize": optimize_window.open, "ReferenceScript": reference_window.open, "ModelManager": model_manager.open, "VocabularySettings": open_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Export": export, "Import": import_result}.items():
         window.On[key].Clicked = guard(callback)
     window.On.Captions.ItemClicked = guard(select)
     window.On.Captions.ItemDoubleClicked = guard(edit)
@@ -381,6 +402,7 @@ def launch(resolve, fusion, bmd):
         editor.Hide()
         editor.ID = editor_id + ".closed." + str(id(editor))
         download_window.close()
+        optimize_window.close()
         reference_window.close()
         model_manager.close()
         vocabulary_window.Hide()

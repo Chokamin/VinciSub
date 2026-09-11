@@ -255,10 +255,33 @@ def main():
         while time.monotonic()<deadline:
             time.sleep(.5)
             refreshed=timeline.GetItemListInTrack('subtitle',track_count)
-            if refreshed and refreshed[0].GetName()=='从全部字幕列表修改':
+            if refreshed and refreshed[0].GetName()=='从全部字幕列表修改' and not widgets['Cancel'].Enabled:
                 break
         assert refreshed[0].GetName()=='从全部字幕列表修改'
         assert other_before==[(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in timeline.GetItemListInTrack('subtitle',other_track)]
+        from vincisub.optimize import optimize
+        from vincisub.catalog import read_all
+        before_opt=read_all(resolve)
+        expected=optimize(before_opt['tracks'][track_count]['captions'],all_punctuation=True,fill_gaps=True,max_gap=.5)
+        ui.QueueEvent(widgets['Optimize'],'Clicked',{});time.sleep(.3)
+        opt=ui.FindWindow('com.vincisub.native.optimize').GetItems()
+        opt['OptimizeTrack'].CurrentIndex=track_count-1
+        opt['StripPunctuation'].Checked=True;opt['FillGaps'].Checked=True
+        ui.QueueEvent(opt['FillGaps'],'Clicked',{});time.sleep(.2)
+        assert '将修改' in opt['OptimizeStatus'].Text,opt['OptimizeStatus'].Text
+        ui.QueueEvent(opt['CancelOptimize'],'Clicked',{});time.sleep(.2)
+        assert read_all(resolve)['rows']==before_opt['rows']
+        ui.QueueEvent(widgets['Optimize'],'Clicked',{});time.sleep(.2)
+        opt['OptimizeTrack'].CurrentIndex=track_count-1
+        ui.QueueEvent(opt['ApplyOptimize'],'Clicked',{})
+        deadline=time.monotonic()+30
+        while time.monotonic()<deadline:
+            time.sleep(.5)
+            actual=read_all(resolve)['tracks'][track_count]['captions']
+            if actual==expected and not widgets['Cancel'].Enabled:break
+        assert actual==expected,(actual,expected)
+        assert other_before==[(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in timeline.GetItemListInTrack('subtitle',other_track)]
+
         assert timeline.GetTrackCount('subtitle')==other_track
         time.sleep(1)
         assert widgets['Captions'].TopLevelItemCount()==len(final_contents)+1
