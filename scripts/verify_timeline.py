@@ -127,13 +127,25 @@ def main():
         time.sleep(1)
         original_second = (subtitles[1].GetName(),subtitles[1].GetStart(),subtitles[1].GetEnd())
         track_count = timeline.GetTrackCount('subtitle')
-        assert widgets['Text'].Enabled and widgets['Apply'].Enabled
+        assert 'Text' not in widgets and 'Apply' not in widgets and 'Offset' not in widgets
         widgets['Captions'].TopLevelItem(0).Selected = True
         ui.QueueEvent(widgets['Captions'],'ItemDoubleClicked',{})
         time.sleep(.5)
-        assert widgets['Text'].Text == result['captions'][0]['text'], 'Subtitle row selection did not reach editor: '+str(widgets['Status'].Text)
-        widgets['Text'].Text = '在插件里校对的字幕'
-        ui.QueueEvent(widgets['Apply'],'Clicked',{})
+        editor=ui.FindWindow('com.vincisub.native.editor')
+        edit_widgets=editor.GetItems()
+        assert edit_widgets['Text'].Text == result['captions'][0]['text'], 'Subtitle row selection did not reach editor: '+str(widgets['Status'].Text)
+        assert not window.Enabled
+        edit_widgets['Text'].Text = '取消的修改不能保存'
+        ui.QueueEvent(edit_widgets['CancelEdit'],'Clicked',{});time.sleep(.2)
+        assert window.Enabled
+        ui.QueueEvent(widgets['Captions'],'ItemDoubleClicked',{});time.sleep(.2)
+        assert edit_widgets['Text'].Text == result['captions'][0]['text']
+        edit_widgets['End'].Value = 0
+        ui.QueueEvent(edit_widgets['Apply'],'Clicked',{});time.sleep(.2)
+        assert edit_widgets['EditStatus'].Text and not window.Enabled
+        edit_widgets['End'].Value = result['captions'][0]['end']
+        edit_widgets['Text'].Text = '在插件里校对的字幕'
+        ui.QueueEvent(edit_widgets['Apply'],'Clicked',{})
         deadline = time.monotonic()+30
         while time.monotonic()<deadline:
             time.sleep(.5)
@@ -218,10 +230,10 @@ def main():
         assert widgets['Captions'].TopLevelItem(1).Text[4]==f'ST{other_track}'
         assert '已读取全部' in widgets['Status'].Text,widgets['Status'].Text
         widgets['Captions'].TopLevelItem(0).Selected=True
-        ui.QueueEvent(widgets['Captions'],'ItemClicked',{})
+        ui.QueueEvent(widgets['Captions'],'ItemDoubleClicked',{})
         time.sleep(.3)
-        widgets['Text'].Text='从全部字幕列表修改'
-        ui.QueueEvent(widgets['Apply'],'Clicked',{})
+        edit_widgets['Text'].Text='从全部字幕列表修改'
+        ui.QueueEvent(edit_widgets['Apply'],'Clicked',{})
         deadline=time.monotonic()+30
         while time.monotonic()<deadline:
             time.sleep(.5)

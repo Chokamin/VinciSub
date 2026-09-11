@@ -39,12 +39,26 @@ def launch(resolve, fusion, bmd):
             ui.Button({"ID": "ReadAll", "Text": "读取全部字幕", "Weight": 0}),
             ui.Label({"ID": "Status", "WordWrap": True, "MinimumSize": [0, 45], "Weight": 0}),
             ui.Tree({"ID": "Captions", "Events": {"ItemClicked": True, "ItemDoubleClicked": True}, "ColumnCount": 5, "RootIsDecorated": False, "AlternatingRowColors": True}),
-            ui.HGroup({"Weight": 0}, [ui.Label({"Text": "开始 / 结束（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Start", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.DoubleSpinBox({"ID": "End", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.Button({"ID": "Apply", "Text": "保存并同步"})]),
-            ui.LineEdit({"ID": "Text", "PlaceholderText": "选择一条字幕后编辑文字", "Weight": 0}),
-            ui.HGroup({"Weight": 0}, [ui.Label({"Text": "整体偏移（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Offset", "Decimals": 3, "Minimum": -86400, "Maximum": 86400, "Value": 0}), ui.Button({"ID": "Export", "Text": "保存 SRT"}), ui.Button({"ID": "Import", "Text": "写入字幕轨"})]),
-            ui.Label({"Text": "识别完成后自动写入当前时间线的字幕轨。双击字幕后在下方修改，点击「保存并同步」刷新本次字幕轨。单条样式请在校对完成后调整。", "Weight": 0, "WordWrap": True}),
+            ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Export", "Text": "保存 SRT"}), ui.Button({"ID": "Import", "Text": "写入字幕轨"})]),
+            ui.Label({"Text": "识别完成后自动写入当前时间线的字幕轨。双击字幕打开编辑窗口，点击「保存并同步」刷新本次字幕轨。单条样式请在校对完成后调整。", "Weight": 0, "WordWrap": True}),
         ]))
     items = window.GetItems()
+    editor_id = WINDOW_ID + '.editor'
+    editor = dispatcher.AddWindow(
+        {"ID": editor_id, "WindowTitle": "奇奇字幕 · 编辑字幕", "Geometry": [300, 220, 640, 220]},
+        ui.VGroup([
+            ui.HGroup({"Weight": 0}, [ui.Label({"Text": "开始 / 结束（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Start", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.DoubleSpinBox({"ID": "End", "Decimals": 3, "Minimum": 0, "Maximum": 1800})]),
+            ui.LineEdit({"ID": "Text", "PlaceholderText": "选择一条字幕后编辑文字", "Weight": 0}),
+            ui.Label({"ID": "EditStatus", "WordWrap": True}),
+            ui.HGroup({"Weight": 0}, [ui.Button({"ID": "CancelEdit", "Text": "取消"}), ui.Button({"ID": "Apply", "Text": "保存并同步"})]),
+        ]))
+    editor_items = editor.GetItems()
+    items.update(editor_items)
+
+    def dismiss_editor(event=None):
+        editor.Hide()
+        window.Enabled = True
+
     vocabulary_window_id = WINDOW_ID + '.vocabulary'
     vocabulary_window = dispatcher.AddWindow(
         {"ID": vocabulary_window_id, "WindowTitle": "奇奇字幕 · 词库设置", "Geometry": [300, 220, 520, 360]},
@@ -156,19 +170,27 @@ def launch(resolve, fusion, bmd):
         items["Text"].Text = row["text"]
 
     def edit(event=None):
+        if jobs.busy() or model_manager.busy() or state['placing']:
+            return
         select(event)
-        items["Text"].SetFocus()
+        if state['selected'] is None:
+            return
+        editor_items['EditStatus'].Text = ''
+        window.Enabled = False
+        editor.Show()
+        editor.Raise()
+        items['Text'].SetFocus()
 
-    def save(event=None):
+    def save(event=None, edit_row=False):
         if state["catalog"] is not None:
             return
         if not state["rows"]:
             return
         rows = [dict(row) for row in state["rows"]]
         index = state["selected"]
-        if index is not None:
+        if edit_row and index is not None:
             rows[index] = dict(start=items["Start"].Value, end=items["End"].Value, text=items["Text"].Text)
-        jobs.save(rows, items["Offset"].Value)
+        jobs.save(rows, jobs.result().get("offset", 0))
         state["rows"] = rows
         render_rows()
 
@@ -200,7 +222,6 @@ def launch(resolve, fusion, bmd):
         state.update(catalog=catalog,rows=catalog['rows'],loaded=jobs.directory)
         items['Start'].Maximum = catalog['duration']
         items['End'].Maximum = catalog['duration']
-        items['Offset'].Value = 0
         render_rows()
         current_status = jobs.status()
         state['status'] = (current_status['state'],current_status['message'])
@@ -216,11 +237,23 @@ def launch(resolve, fusion, bmd):
             state['loaded'] = jobs.directory
             import_result()
             return
-        save()
+        save(edit_row=True)
         if jobs.directory and (jobs.directory/'placement-receipt.json').exists():
             import_result()
         else:
             items["Status"].Text = "修改已保存。"
+
+    def submit_editor(event=None):
+        try:
+            apply()
+        except Exception as error:
+            editor_items['EditStatus'].Text = str(error)
+            return
+        dismiss_editor()
+
+    editor.On.Apply.Clicked = submit_editor
+    editor.On.CancelEdit.Clicked = dismiss_editor
+    editor.On[editor_id].Close = dismiss_editor
 
     def import_result(event=None):
         if state['placing']:
@@ -261,7 +294,7 @@ def launch(resolve, fusion, bmd):
             items['Cancel'].Enabled = True
             return
         if state['placing']:
-            for key in ['Generate', 'VocabularySettings', 'ReadAll', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End', 'Offset']:
+            for key in ['Generate', 'VocabularySettings', 'ReadAll', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End']:
                 items[key].Enabled = False
             items['Cancel'].Enabled = True
             path = jobs.directory/'placement.json'
@@ -297,11 +330,11 @@ def launch(resolve, fusion, bmd):
         if state['catalog'] is not None:
             for key in ['Apply','Text','Start','End']:
                 items[key].Enabled = bool(state['rows'])
-            for key in ['Export','Import','Offset']:
+            for key in ['Export','Import']:
                 items[key].Enabled = False
             return
         done = status["state"] == "done"
-        for key in ["Apply", "Export", "Import", "Text", "Start", "End", "Offset"]:
+        for key in ["Apply", "Export", "Import", "Text", "Start", "End"]:
             placed = jobs.directory and (jobs.directory/"placement-receipt.json").exists()
             items[key].Enabled = done
         if done and state["loaded"] != jobs.directory:
@@ -309,7 +342,6 @@ def launch(resolve, fusion, bmd):
             state["rows"] = result["captions"]
             items["Start"].Maximum = result["duration"]
             items["End"].Maximum = result["duration"]
-            items["Offset"].Value = result.get("offset", 0)
             render_rows()
             state["loaded"] = jobs.directory
             if state['auto_place'] == jobs.directory:
@@ -325,7 +357,7 @@ def launch(resolve, fusion, bmd):
         save()
         dispatcher.ExitLoop()
 
-    for key, callback in {"ModelManager": model_manager.open, "VocabularySettings": open_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Apply": apply, "Export": export, "Import": import_result}.items():
+    for key, callback in {"ModelManager": model_manager.open, "VocabularySettings": open_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Export": export, "Import": import_result}.items():
         window.On[key].Clicked = guard(callback)
     window.On.Captions.ItemClicked = guard(select)
     window.On.Captions.ItemDoubleClicked = guard(edit)
@@ -342,6 +374,8 @@ def launch(resolve, fusion, bmd):
         dispatcher.RunLoop()
     finally:
         timer.Stop()
+        editor.Hide()
+        editor.ID = editor_id + ".closed." + str(id(editor))
         download_window.close()
         model_manager.close()
         vocabulary_window.Hide()
