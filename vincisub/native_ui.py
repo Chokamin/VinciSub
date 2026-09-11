@@ -291,13 +291,19 @@ def launch(resolve, fusion, bmd):
         if jobs.busy() or model_manager.busy() or state['placing']:
             raise ValueError('请等待当前任务完成。')
         if state['catalog'] is not None:
-            return [dict(label=f"ST{track} · {source['name']}（整轨）",track=track,rows=[dict(row) for row in source['captions']])
+            return [dict(catalog=state['catalog'],origin=state['catalog'],label=f"ST{track} · {source['name']}（整轨）",track=track,rows=[dict(row) for row in source['captions']])
                     for track,source in state['catalog']['tracks'].items() if source['captions']]
-        return [dict(label='本次生成的字幕',track=None,rows=[dict(row) for row in state['rows']])] if state['rows'] else []
+        return [dict(origin=json.loads((jobs.directory/'resolve.json').read_text(encoding='utf-8')),directory=jobs.directory,label='本次生成的字幕',track=None,rows=[dict(row) for row in state['rows']])] if state['rows'] else []
 
     def apply_optimization(source,rows):
+        current=describe_timeline(resolve)
+        if any(current[k]!=source['origin'][k] for k in ('project_id','timeline_id')):
+            raise ValueError('时间线已切换，请重新读取字幕和计算优化。')
+        if source['track'] is None and source['directory']!=jobs.directory:
+            raise ValueError('字幕任务已变化，请重新计算优化。')
         if source['track'] is not None:
-            jobs.directory=track_job(state['catalog'],source['track'],rows,jobs.data)
+            state['catalog']=source['catalog']
+            jobs.directory=track_job(source['catalog'],source['track'],rows,jobs.data)
             state['loaded']=jobs.directory
         else:
             jobs.save(rows,jobs.result().get('offset',0))
@@ -305,11 +311,21 @@ def launch(resolve, fusion, bmd):
             render_rows()
         import_result()
 
-    optimize_window=OptimizeWindow(ui,dispatcher,window,optimization_sources,apply_optimization)
+    def prepare_alignment(source):
+        current=describe_timeline(resolve)
+        origin=state['catalog'] if state['catalog'] is not None else json.loads((jobs.directory/'resolve.json').read_text(encoding='utf-8'))
+        if any(current[k]!=origin[k] for k in ('project_id','timeline_id')):
+            raise ValueError('时间线已切换，请重新读取字幕。')
+        return snapshot(resolve,selected_tracks(),range_seconds=(max(0,source['rows'][0]['start']-1),source['rows'][-1]['end']+1))
+
+    optimize_window=OptimizeWindow(ui,dispatcher,window,optimization_sources,apply_optimization,prepare_alignment,jobs)
 
     download_window = DownloadWindow(ui,dispatcher,model_manager.cancel)
 
     def poll(event=None):
+        optimize_window.poll()
+        if optimize_window.process is not None:
+            return
         download_status = model_manager.status() if model_manager.busy() else jobs.status()
         model_manager.poll()
         download_window.update(download_status,model_manager.tick)
@@ -376,7 +392,7 @@ def launch(resolve, fusion, bmd):
                 items["Status"].Text += " " + " ".join(result["warnings"])
 
     def close(event=None):
-        if jobs.busy() or model_manager.busy() or state["placing"]:
+        if jobs.busy() or model_manager.busy() or optimize_window.process is not None or state["placing"]:
             items["Status"].Text = "任务仍在运行，请先取消任务再关闭窗口。"
             return
         save()

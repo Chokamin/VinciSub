@@ -282,6 +282,35 @@ def main():
         assert actual==expected,(actual,expected)
         assert other_before==[(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in timeline.GetItemListInTrack('subtitle',other_track)]
 
+        alignment_before=read_all(resolve)['tracks'][track_count]['captions']
+        ui.QueueEvent(widgets['Optimize'],'Clicked',{});time.sleep(.3)
+        opt['OptimizeTrack'].CurrentIndex=track_count-1
+        opt['TrimEnding'].Checked=False;opt['StripPunctuation'].Checked=False;opt['FillGaps'].Checked=False
+        opt['Realign'].Checked=True
+        ui.QueueEvent(opt['Realign'],'Clicked',{});time.sleep(.2)
+        assert opt['ApplyOptimize'].Text=='计算音频对齐'
+        ui.QueueEvent(opt['ApplyOptimize'],'Clicked',{})
+        deadline=time.monotonic()+120
+        while time.monotonic()<deadline:
+            time.sleep(.5)
+            if opt['ApplyOptimize'].Text=='应用并同步':break
+        assert opt['ApplyOptimize'].Text=='应用并同步',opt['OptimizeStatus'].Text
+        assert read_all(resolve)['tracks'][track_count]['captions']==alignment_before
+        if opt['ApplyOptimize'].Enabled:
+            ui.QueueEvent(opt['ApplyOptimize'],'Clicked',{})
+            deadline=time.monotonic()+30
+            while time.monotonic()<deadline:
+                time.sleep(.5)
+                aligned=read_all(resolve)['tracks'][track_count]['captions']
+                if aligned!=alignment_before and not widgets['Cancel'].Enabled:break
+        else:
+            assert '需校对序号' in opt['OptimizeStatus'].Text
+            aligned=alignment_before
+            ui.QueueEvent(opt['CancelOptimize'],'Clicked',{})
+            time.sleep(.2)
+        assert [r['text'] for r in aligned]==[r['text'] for r in alignment_before]
+        assert all(a['end']<=b['start'] for a,b in zip(aligned,aligned[1:]))
+        assert other_before==[(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in timeline.GetItemListInTrack('subtitle',other_track)]
         assert timeline.GetTrackCount('subtitle')==other_track
         time.sleep(1)
         assert widgets['Captions'].TopLevelItemCount()==len(final_contents)+1

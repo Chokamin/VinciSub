@@ -59,8 +59,15 @@ def source_seconds(timecode, fps):
     return frames / fps
 
 
-def snapshot(resolve, track_index=None):
+def snapshot(resolve, track_index=None, range_seconds=None):
     info = describe_timeline(resolve)
+    if range_seconds is not None:
+        left,right=map(float,range_seconds)
+        if not all(math.isfinite(v) for v in (left,right)) or left<0 or right<=left:
+            raise ValueError('音频对齐范围无效。')
+        right=min(right,(info['timeline_end']-info['timeline_start'])/info['fps'])
+        if right<=left:raise ValueError('字幕超出时间线范围。')
+        info.update(start=info['timeline_start']+left*info['fps'],end=info['timeline_start']+right*info['fps'],offset=left,duration=right-left)
     selected = [track_index] if isinstance(track_index, int) else list(track_index or [])
     selected = sorted(set(selected))
     if any(index not in [track['index'] for track in info['tracks']] for index in selected):
