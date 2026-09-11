@@ -15,8 +15,7 @@ from .subtitles import Word, make_captions
 from .vocabulary import context
 
 
-MODELS = {"qwen-0.6b": "Qwen/Qwen3-ASR-0.6B", "qwen-1.7b": "Qwen/Qwen3-ASR-1.7B"}
-ALIGNER = "Qwen/Qwen3-ForcedAligner-0.6B"
+from .models import MODELS, ALIGNER, ensure, cache_lock
 
 
 def with_punctuation(items, text, convert):
@@ -61,21 +60,19 @@ def run(job_dir):
     import torch
     from opencc import OpenCC
     from qwen_asr import Qwen3ASRModel
-    from huggingface_hub import snapshot_download
-
     def local_model(identifier):
-        try:
-            return snapshot_download(identifier, local_files_only=True)
-        except Exception:
-            return snapshot_download(identifier, allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model", "*.tiktoken"])
+        return ensure(identifier,lambda value:write_json(job_dir/'status.json',value))
 
+    asr_path=local_model(MODELS[request['model']])
+    aligner_path=local_model(ALIGNER)
+    status('running','模型就绪，正在加载…',8)
     requested_device = os.environ.get("VINCISUB_DEVICE", "auto")
     device = requested_device if requested_device != "auto" else ("cuda:0" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     dtype = torch.float16 if device.startswith("cuda") else torch.float32
     model = Qwen3ASRModel.from_pretrained(
-        local_model(MODELS[request["model"]]), dtype=dtype, device_map=device,
+        asr_path, dtype=dtype, device_map=device,
         attn_implementation="eager", max_inference_batch_size=1, max_new_tokens=512,
-        forced_aligner=local_model(ALIGNER),
+        forced_aligner=aligner_path,
         forced_aligner_kwargs=dict(dtype=dtype, device_map=device, attn_implementation="eager"),
     )
     if not timeline:
@@ -117,7 +114,8 @@ def main():
     parser.add_argument("job", type=Path)
     args = parser.parse_args()
     try:
-        run(args.job)
+        with cache_lock():
+            run(args.job)
     except Exception as error:
         traceback.print_exc()
         write_json(args.job / "status.json", dict(state="error", message=f"{type(error).__name__}: {error}", progress=0))

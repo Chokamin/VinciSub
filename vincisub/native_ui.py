@@ -7,6 +7,7 @@ from pathlib import Path
 from .jobs import Jobs
 from .catalog import read_all, edit_job
 from . import vocabulary
+from .model_ui import ModelManager, progress_text
 from .storage import ROOT, write_json
 from .timeline import describe_timeline, snapshot
 
@@ -27,7 +28,7 @@ def launch(resolve, fusion, bmd):
         {"ID": WINDOW_ID, "WindowTitle": "VinciSub · 奇奇字幕", "Geometry": [180, 140, 800, 700]},
         ui.VGroup([
             ui.Label({"Text": "VinciSub  ·  奇奇字幕", "Weight": 0, "Font": ui.Font({"PixelSize": 22, "Bold": True})}),
-            ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Refresh", "Text": "刷新时间线 / 音轨"}), ui.Button({"ID": "VocabularySettings", "Text": "词库设置…", "Weight": 0})]),
+            ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Refresh", "Text": "刷新时间线 / 音轨"}), ui.Button({"ID": "VocabularySettings", "Text": "词库设置…", "Weight": 0}), ui.Button({"ID": "ModelManager", "Text": "模型管理…", "Weight": 0})]),
             ui.Label({"ID": "Timeline", "Weight": 0}),
             ui.Label({"Text": "音轨（可多选，不勾选时自动识别）", "Weight": 0}),
             ui.Tree({"ID": "Track", "ColumnCount": 1, "HeaderHidden": True, "RootIsDecorated": False, "MinimumSize": [0, 75], "MaximumSize": [16777215, 110], "Weight": 0}),
@@ -37,6 +38,7 @@ def launch(resolve, fusion, bmd):
             ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Generate", "Text": "生成字幕"}), ui.Button({"ID": "Cancel", "Text": "取消任务"})]),
             ui.Button({"ID": "ReadAll", "Text": "读取全部字幕", "Weight": 0}),
             ui.Label({"ID": "Status", "WordWrap": True, "MinimumSize": [0, 45], "Weight": 0}),
+            ui.Label({"ID": "DownloadProgress", "Text": "", "WordWrap": True, "Weight": 0, "Hidden": True}),
             ui.Tree({"ID": "Captions", "Events": {"ItemClicked": True, "ItemDoubleClicked": True}, "ColumnCount": 5, "RootIsDecorated": False, "AlternatingRowColors": True}),
             ui.HGroup({"Weight": 0}, [ui.Label({"Text": "开始 / 结束（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Start", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.DoubleSpinBox({"ID": "End", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.Button({"ID": "Apply", "Text": "保存并同步"})]),
             ui.LineEdit({"ID": "Text", "PlaceholderText": "选择一条字幕后编辑文字", "Weight": 0}),
@@ -90,6 +92,8 @@ def launch(resolve, fusion, bmd):
     for i, width in enumerate([50, 85, 85, 420, 65]):
         tree.ColumnWidth[i] = width
     state = {"catalog": None, "rows": [], "selected": None, "loaded": None, "status": None, "track_ids": [], "timeline_id": None, "range": None, "placement": None, "auto_place": None, "placing": False}
+
+    model_manager = ModelManager(ui,dispatcher,window,jobs,lambda:jobs.busy() or state["placing"])
 
     def guard(callback):
         def wrapped(event=None):
@@ -239,12 +243,23 @@ def launch(resolve, fusion, bmd):
         poll()
 
     def cancel(event=None):
-        if state['placing']:
+        if model_manager.busy():
+            model_manager.cancel()
+        elif state['placing']:
             (jobs.directory/'placement-cancel').touch()
         else:
             jobs.cancel()
 
     def poll(event=None):
+        download_status = model_manager.status() if model_manager.busy() else jobs.status()
+        model_manager.poll()
+        items['DownloadProgress'].Text = progress_text(download_status,model_manager.tick)
+        items['DownloadProgress'].Visible = download_status.get('phase') == 'download' and download_status.get('state') == 'running'
+        if model_manager.busy():
+            for key in ['Generate','VocabularySettings','ReadAll','Track','Refresh','Model','Chars','Apply','Export','Import']:
+                items[key].Enabled = False
+            items['Cancel'].Enabled = True
+            return
         if state['placing']:
             for key in ['Generate', 'VocabularySettings', 'ReadAll', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End', 'Offset']:
                 items[key].Enabled = False
@@ -304,13 +319,13 @@ def launch(resolve, fusion, bmd):
                 items["Status"].Text += " " + " ".join(result["warnings"])
 
     def close(event=None):
-        if jobs.busy() or state["placing"]:
+        if jobs.busy() or model_manager.busy() or state["placing"]:
             items["Status"].Text = "任务仍在运行，请先取消任务再关闭窗口。"
             return
         save()
         dispatcher.ExitLoop()
 
-    for key, callback in {"VocabularySettings": open_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Apply": apply, "Export": export, "Import": import_result}.items():
+    for key, callback in {"ModelManager": model_manager.open, "VocabularySettings": open_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Apply": apply, "Export": export, "Import": import_result}.items():
         window.On[key].Clicked = guard(callback)
     window.On.Captions.ItemClicked = guard(select)
     window.On.Captions.ItemDoubleClicked = guard(edit)
@@ -327,6 +342,7 @@ def launch(resolve, fusion, bmd):
         dispatcher.RunLoop()
     finally:
         timer.Stop()
+        model_manager.close()
         vocabulary_window.Hide()
         vocabulary_window.ID = vocabulary_window_id + ".closed." + str(id(vocabulary_window))
         window.Hide()
