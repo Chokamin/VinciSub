@@ -90,11 +90,22 @@ def main():
         assert not (job/'audio.wav').exists() and not (job/'source').exists()
         time.sleep(1)
         assert widgets['Captions'].TopLevelItemCount() == len(result['captions'])
-        ui.QueueEvent(widgets['Import'], 'Clicked', {})
-        deadline = time.monotonic() + 10
-        while '已导入媒体池' not in widgets['Status'].Text and time.monotonic() < deadline:
-            time.sleep(.2)
-        assert '已导入媒体池' in widgets['Status'].Text, widgets['Status'].Text
+        deadline = time.monotonic() + 180
+        placement = {}
+        while time.monotonic() < deadline:
+            if (job/'placement.json').exists():
+                placement = json.loads((job/'placement.json').read_text(encoding='utf-8'))
+                if placement['state'] in ('done','error'):
+                    break
+            time.sleep(.5)
+        assert placement.get('state') == 'done', placement
+        assert temporary.GetCurrentTimeline().GetUniqueId() == second['timeline_id']
+        subtitles = timeline.GetItemListInTrack('subtitle', timeline.GetTrackCount('subtitle'))
+        assert len(subtitles) == len(result['captions'])
+        for item, caption in zip(subtitles, result['captions']):
+            assert item.GetStart() == 90000 + round(caption['start']*25)
+            assert item.GetEnd() == 90000 + round(caption['end']*25)
+        time.sleep(1)
         ui.QueueEvent(window, 'Close', {'close':True})
         window = None
         timeline.ClearMarkInOut()

@@ -1,10 +1,11 @@
 """Resolve UIManager window; no browser or HTTP service."""
 import json
 import os
+import subprocess
 from pathlib import Path
 
 from .jobs import Jobs
-from .resolve import import_subtitle
+from .storage import ROOT, write_json
 from .timeline import describe_timeline, snapshot
 
 WINDOW_ID = "com.vincisub.native"
@@ -35,8 +36,8 @@ def launch(resolve, fusion, bmd):
             ui.Tree({"ID": "Captions", "ColumnCount": 4, "RootIsDecorated": False, "AlternatingRowColors": True}),
             ui.HGroup({"Weight": 0}, [ui.Label({"Text": "开始 / 结束（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Start", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.DoubleSpinBox({"ID": "End", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.Button({"ID": "Apply", "Text": "保存当前条"})]),
             ui.LineEdit({"ID": "Text", "PlaceholderText": "选择一条字幕后编辑文字", "Weight": 0}),
-            ui.HGroup({"Weight": 0}, [ui.Label({"Text": "整体偏移（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Offset", "Decimals": 3, "Minimum": -86400, "Maximum": 86400, "Value": 0}), ui.Button({"ID": "Export", "Text": "保存 SRT"}), ui.Button({"ID": "Import", "Text": "导入达芬奇"})]),
-            ui.Label({"Text": "导入后将媒体池中的 SRT 拖到字幕轨道起点。字幕已按时间线位置对齐，无需手动补偿入点。", "Weight": 0, "WordWrap": True}),
+            ui.HGroup({"Weight": 0}, [ui.Label({"Text": "整体偏移（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Offset", "Decimals": 3, "Minimum": -86400, "Maximum": 86400, "Value": 0}), ui.Button({"ID": "Export", "Text": "保存 SRT"}), ui.Button({"ID": "Import", "Text": "写入字幕轨"})]),
+            ui.Label({"Text": "识别完成后自动写入当前时间线的字幕轨。定位期间请等待，不要操作达芬奇；写入后请在字幕轨内校对。", "Weight": 0, "WordWrap": True}),
         ]))
     items = window.GetItems()
     items["Model"].AddItems(["Qwen3-ASR 0.6B · 轻量", "Qwen3-ASR 1.7B · 标准"])
@@ -47,7 +48,7 @@ def launch(resolve, fusion, bmd):
     tree.SetHeaderItem(header)
     for i, width in enumerate([50, 85, 85, 500]):
         tree.ColumnWidth[i] = width
-    state = {"rows": [], "selected": None, "loaded": None, "status": None, "track_ids": [], "timeline_id": None, "range": None}
+    state = {"rows": [], "selected": None, "loaded": None, "status": None, "track_ids": [], "timeline_id": None, "range": None, "placement": None, "auto_place": None, "placing": False}
 
     def guard(callback):
         def wrapped(event=None):
@@ -116,7 +117,7 @@ def launch(resolve, fusion, bmd):
         plan = snapshot(resolve, state["track_ids"][current])
         show_range(plan)
         jobs.start("timeline", model="qwen-0.6b" if items["Model"].CurrentIndex == 0 else "qwen-1.7b", max_chars=items["Chars"].Value, timeline=plan)
-        state.update(rows=[], selected=None, loaded=None, status=None)
+        state.update(rows=[], selected=None, loaded=None, status=None, auto_place=jobs.directory)
         render_rows()
         poll()
 
@@ -127,13 +128,39 @@ def launch(resolve, fusion, bmd):
             items["Status"].Text = "已保存：" + str(jobs.export(directory))
 
     def import_result(event=None):
+        if state['placing']:
+            return
         save()
-        metadata_file = jobs.directory / "resolve.json"
-        metadata = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else None
-        result = import_subtitle(jobs.export(), metadata)
-        items["Status"].Text = result["message"]
+        if not jobs.directory or not (jobs.directory/'resolve.json').exists():
+            raise ValueError('该任务没有来源时间线信息，请重新生成。')
+        (jobs.directory/'placement-cancel').unlink(missing_ok=True)
+        write_json(jobs.directory/'placement.json', dict(state='running', message='正在准备写入字幕轨…'))
+        log = (jobs.directory/'placement.log').open('ab')
+        try:
+            state['placement'] = subprocess.Popen([str(jobs.python), '-m', 'vincisub.placement', str(jobs.directory)], cwd=str(ROOT), stdout=log, stderr=log)
+        finally:
+            log.close()
+        state['placing'] = True
+        window.Hide()
+
+    def cancel(event=None):
+        if state['placing']:
+            (jobs.directory/'placement-cancel').touch()
+        else:
+            jobs.cancel()
 
     def poll(event=None):
+        if state['placing']:
+            path = jobs.directory/'placement.json'
+            placement = json.loads(path.read_text(encoding='utf-8'))
+            items['Status'].Text = placement['message']
+            if state['placement'].poll() is not None:
+                state['placing'] = False
+                if placement['state'] == 'running':
+                    items['Status'].Text = '字幕写入进程中断，请检查本次 VinciSub 字幕轨。'
+                window.Show()
+                window.ActivateWindow()
+            return
         status = jobs.status()
         signature = (status["state"], status["message"])
         if signature != state["status"]:
@@ -154,7 +181,8 @@ def launch(resolve, fusion, bmd):
                 items["Range"].Text = "请打开有效时间线并刷新。"
         done = status["state"] == "done"
         for key in ["Apply", "Export", "Import", "Text", "Start", "End", "Offset"]:
-            items[key].Enabled = done
+            placed = jobs.directory and (jobs.directory/"placement-receipt.json").exists()
+            items[key].Enabled = done and (not placed or key in ("Export", "Import"))
         if done and state["loaded"] != jobs.directory:
             result = jobs.result()
             state["rows"] = result["captions"]
@@ -163,17 +191,20 @@ def launch(resolve, fusion, bmd):
             items["Offset"].Value = result.get("offset", 0)
             render_rows()
             state["loaded"] = jobs.directory
+            if state['auto_place'] == jobs.directory:
+                state['auto_place'] = None
+                import_result()
             if result.get("warnings"):
                 items["Status"].Text += " " + " ".join(result["warnings"])
 
     def close(event=None):
-        if jobs.busy():
+        if jobs.busy() or state["placing"]:
             items["Status"].Text = "任务仍在运行，请先取消任务再关闭窗口。"
             return
         save()
         dispatcher.ExitLoop()
 
-    for key, callback in {"Refresh": refresh, "Generate": generate, "Cancel": lambda e: jobs.cancel(), "Apply": save, "Export": export, "Import": import_result}.items():
+    for key, callback in {"Refresh": refresh, "Generate": generate, "Cancel": cancel, "Apply": save, "Export": export, "Import": import_result}.items():
         window.On[key].Clicked = guard(callback)
     window.On.Captions.ItemClicked = guard(select)
     window.On[WINDOW_ID].Close = guard(close)

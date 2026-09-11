@@ -18,7 +18,7 @@
 - 每次改动后，必须编写或更新相关测试；文档或工作流改动也应有适当的验证。
 - 交付前必须运行所有现有测试和与改动相关的验证，确保全部通过。
 - 不得将未运行、失败或受阻的检查标记为通过；遇到阻塞时记录原因并说明尚未完成。
-- 当前测试命令：`.venv/bin/python -B -m unittest discover -s tests -v`；首次运行先执行 `bash scripts/setup.sh`。修改原生窗口后必须在达芬奇中实测启动、任务完成和相关交互；修改导入功能后使用 `scripts/verify_resolve.py` 的临时项目验证；修改时间线音频读取/范围/音轨选择后使用 `scripts/verify_timeline.py` 的独立项目和原生识别流程验证。不得在用户现有时间线上写入测试素材。
+- 当前测试命令：`.venv/bin/python -B -m unittest discover -s tests -v`；首次运行先执行 `bash scripts/setup.sh`。修改原生窗口后必须在达芬奇中实测启动、任务完成和相关交互；修改导入功能后使用 `scripts/verify_resolve.py` 的临时项目验证；修改时间线音频读取/范围/音轨选择后使用 `scripts/verify_timeline.py` 的独立项目和原生识别流程验证。新增自动落轨还须执行 `scripts/verify_placement.py`（已有字幕保留与重复写入）和 `scripts/verify_timeline.py`（原生按钮到字幕轨），不能以终端助手测试替代后者。不得在用户现有时间线上写入测试素材。
 
 ## 完成修改后
 

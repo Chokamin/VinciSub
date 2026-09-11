@@ -51,6 +51,14 @@
 - 验证结果：Resolve 21.1 / 25fps / 01:00:00:00 起始，独立项目中先 AddTrack('subtitle') + 不含源帧参数的 SRT AppendToTimeline，再用 CUA 操作检查器的起止时间字段及“下一个”。第一条从 90267–90292 校正到 90050–90075，第二条从 90342–90367 校正到 90125–90150。自动断言 PASS：同一时间线、文字及帧位置准确、音视频片段 ID/起止帧未变。结束恢复已保存原项目、删除测试项目。43 项现有测试通过。
 - 剩余问题：快捷键、菜单覆盖和 CUA 拖放尝试未成功插入字幕；不能断言人工拖放不可用。成功路径依赖外部 CUA 选择字幕及编辑原生检查器，目前未接入 VinciSub 独立一键生成。大批量字幕、已有字幕冲突、不同布局/语言、辅助功能权限和中断恢复仍待验证。
 
+### 2026-09-11：接入原时间线自动字幕落轨（验收待授权）
+
+- 需求：把已验证的界面定位接入原生生成流程，识别完成自动写入当前原始时间线字幕轨。
+- 改动：新增 placement 进程、独立 Swift 辅助应用、逐条追加/检查器定位/回读、错轨清理、任务凭据和全局锁；窗口生成后自动调用，成功后原生轨道校对。助手通过 LaunchServices 独立启动并申请系统权限；不导出音频、不生成时间线副本。
+- 关键文件：vincisub/placement.py、native/ResolveCaptionBridge.swift、native/Helper.entitlements、vincisub/native_ui.py、tests/test_placement.py、scripts/verify_placement.py、scripts/verify_timeline.py、README.md、HANDOFF.md、DECISIONS.md、CLAUDE.md。
+- 验证结果：52 项单元测试通过；旧终端助手在独立 25fps / 01:00:00:00 项目准确定位三条字幕，已有 ST1 保留、新字幕 ST2、音视频不变及重复预防均通过；媒体池兼容验证通过。原生真实 Qwen 识别通过，但最初 Resolve 子进程的 Apple Events 被 -1743 拒绝；改独立 app 后进入系统授权/启动调试，完整 verify_timeline 尚未通过。所有测试恢复原项目并清理临时项目，未写入用户原时间线。
+- 剩余问题：用户已开启 Helper 权限；修复编译目标和启动后应用仍返回未授权，已请求移除后重新添加授权。最终独立应用还须重新通过 verify_placement 与 verify_timeline，不能把旧终端助手通过当作完整产品验收。非 25fps、英文界面及大批量字幕未实测。
+
 ## 关键文件
 
 - PROJECT_MEMORY.md、DECISIONS.md、HANDOFF.md、CLAUDE.md：跨对话协作入口。
@@ -64,4 +72,4 @@
 ## 短期问题
 
 - 直接时间线识别已替代手动导出，当前不再依赖曾失败的渲染接口。
-- 后续验证真实长音频、变速及更多音频映射；研究字幕直接放置到轨道。
+- 后续验证真实长音频、变速及更多音频映射；当前优先完成独立 Helper 授权后的自动落轨验收。
