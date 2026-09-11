@@ -38,7 +38,7 @@ class Jobs:
     def _status(self, state, message, progress=0):
         write_json(self.directory / "status.json", dict(state=state, message=message, progress=progress))
 
-    def start(self, source="file", path=None, model="qwen-0.6b", max_chars=20, timeline=None, vocabulary=None):
+    def start(self, source="file", path=None, model="qwen-0.6b", max_chars=20, timeline=None, vocabulary=None, reference_script=""):
         if self.busy():
             raise ValueError("已有任务运行中，请等待完成或先取消。")
         if not self.python.is_file():
@@ -54,10 +54,12 @@ class Jobs:
         if source == "timeline" and (not timeline or not timeline.get("clips")):
             raise ValueError("没有可识别的时间线音频。")
         from .vocabulary import parse
+        from .reference import validate
+        script = validate(reference_script)
         terms = parse("\n".join(vocabulary or []))
         self.directory = self.jobs / uuid.uuid4().hex
         self.directory.mkdir()
-        request = dict(vocabulary=terms, source=source, model=model, max_chars=max_chars, filename=path.name if source == "file" else "当前时间线")
+        request = dict(reference_script=script, vocabulary=terms, source=source, model=model, max_chars=max_chars, filename=path.name if source == "file" else "当前时间线")
         if source == "file":
             request["input_path"] = str(path.resolve())
         if source == "timeline":

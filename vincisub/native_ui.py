@@ -6,7 +6,8 @@ from pathlib import Path
 
 from .jobs import Jobs
 from .catalog import read_all, edit_job
-from . import vocabulary
+from . import vocabulary, reference
+from .reference_ui import ReferenceWindow
 from .model_ui import ModelManager, DownloadWindow
 from .storage import ROOT, write_json
 from .timeline import describe_timeline, snapshot
@@ -28,7 +29,7 @@ def launch(resolve, fusion, bmd):
         {"ID": WINDOW_ID, "WindowTitle": "VinciSub · 奇奇字幕", "Geometry": [180, 140, 800, 700]},
         ui.VGroup([
             ui.Label({"Text": "VinciSub  ·  奇奇字幕", "Weight": 0, "Font": ui.Font({"PixelSize": 22, "Bold": True})}),
-            ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Refresh", "Text": "刷新时间线 / 音轨"}), ui.Button({"ID": "VocabularySettings", "Text": "词库设置…", "Weight": 0}), ui.Button({"ID": "ModelManager", "Text": "模型管理…", "Weight": 0})]),
+            ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Refresh", "Text": "刷新时间线 / 音轨"}), ui.Button({"ID": "ReferenceScript", "Text": "参考脚本…", "Weight": 0}), ui.Button({"ID": "VocabularySettings", "Text": "词库设置…", "Weight": 0}), ui.Button({"ID": "ModelManager", "Text": "模型管理…", "Weight": 0})]),
             ui.Label({"ID": "Timeline", "Weight": 0}),
             ui.Label({"Text": "音轨（可多选，不勾选时自动识别）", "Weight": 0}),
             ui.Tree({"ID": "Track", "ColumnCount": 1, "HeaderHidden": True, "RootIsDecorated": False, "MinimumSize": [0, 75], "MaximumSize": [16777215, 110], "Weight": 0}),
@@ -105,6 +106,8 @@ def launch(resolve, fusion, bmd):
     for i, width in enumerate([50, 85, 85, 420, 65]):
         tree.ColumnWidth[i] = width
     state = {"catalog": None, "rows": [], "selected": None, "loaded": None, "status": None, "track_ids": [], "timeline_id": None, "range": None, "placement": None, "auto_place": None, "placing": False}
+
+    reference_window = ReferenceWindow(ui,dispatcher,window,jobs.data)
 
     model_manager = ModelManager(ui,dispatcher,window,jobs,lambda:jobs.busy() or state["placing"])
 
@@ -201,9 +204,10 @@ def launch(resolve, fusion, bmd):
             refresh()
             raise ValueError("时间线已切换，请确认音轨后重新生成。")
         hints = vocabulary.load(jobs.data)
+        script = reference.load(jobs.data)
         plan = snapshot(resolve, selected_tracks())
         show_range(plan)
-        jobs.start("timeline", model="qwen-0.6b" if items["Model"].CurrentIndex == 0 else "qwen-1.7b", max_chars=items["Chars"].Value, timeline=plan, vocabulary=hints["terms"] if hints["enabled"] else [])
+        jobs.start("timeline", model="qwen-0.6b" if items["Model"].CurrentIndex == 0 else "qwen-1.7b", max_chars=items["Chars"].Value, timeline=plan, vocabulary=hints["terms"] if hints["enabled"] else [], reference_script=script["text"] if script["enabled"] else "")
         state.update(catalog=None, rows=[], selected=None, loaded=None, status=None, auto_place=jobs.directory)
         render_rows()
         poll()
@@ -289,12 +293,12 @@ def launch(resolve, fusion, bmd):
         model_manager.poll()
         download_window.update(download_status,model_manager.tick)
         if model_manager.busy():
-            for key in ['Generate','VocabularySettings','ReadAll','Track','Refresh','Model','Chars','Apply','Export','Import']:
+            for key in ['Generate','ReferenceScript','VocabularySettings','ReadAll','Track','Refresh','Model','Chars','Apply','Export','Import']:
                 items[key].Enabled = False
             items['Cancel'].Enabled = True
             return
         if state['placing']:
-            for key in ['Generate', 'VocabularySettings', 'ReadAll', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End']:
+            for key in ['Generate', 'ReferenceScript', 'VocabularySettings', 'ReadAll', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End']:
                 items[key].Enabled = False
             items['Cancel'].Enabled = True
             path = jobs.directory/'placement.json'
@@ -313,7 +317,7 @@ def launch(resolve, fusion, bmd):
             items["Status"].Text = status["message"]
             state["status"] = signature
         busy = jobs.busy()
-        for key in ["Generate", "VocabularySettings", "ReadAll", "Track", "Refresh", "Model", "Chars"]:
+        for key in ["Generate", "ReferenceScript", "VocabularySettings", "ReadAll", "Track", "Refresh", "Model", "Chars"]:
             items[key].Enabled = not busy
         items["Cancel"].Enabled = busy
         if not busy:
@@ -357,7 +361,7 @@ def launch(resolve, fusion, bmd):
         save()
         dispatcher.ExitLoop()
 
-    for key, callback in {"ModelManager": model_manager.open, "VocabularySettings": open_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Export": export, "Import": import_result}.items():
+    for key, callback in {"ReferenceScript": reference_window.open, "ModelManager": model_manager.open, "VocabularySettings": open_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Export": export, "Import": import_result}.items():
         window.On[key].Clicked = guard(callback)
     window.On.Captions.ItemClicked = guard(select)
     window.On.Captions.ItemDoubleClicked = guard(edit)
@@ -377,6 +381,7 @@ def launch(resolve, fusion, bmd):
         editor.Hide()
         editor.ID = editor_id + ".closed." + str(id(editor))
         download_window.close()
+        reference_window.close()
         model_manager.close()
         vocabulary_window.Hide()
         vocabulary_window.ID = vocabulary_window_id + ".closed." + str(id(vocabulary_window))

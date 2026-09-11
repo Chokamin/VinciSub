@@ -12,7 +12,7 @@ from pathlib import Path
 from .audio import chunks, normalize
 from .storage import DATA, write_json
 from .subtitles import Word, make_captions
-from .vocabulary import context
+from .reference import context
 
 
 from .models import MODELS, ALIGNER, ensure, cache_lock
@@ -32,6 +32,17 @@ def with_punctuation(items, text, convert):
                 suffix = match.group()
                 cursor += len(suffix)
         yield Word(convert(token + suffix), float(item.start_time), float(item.end_time))
+
+
+def recognize_with_reference_fallback(recognize,hints,request,warnings):
+    try:
+        return recognize(hints)
+    except ValueError:
+        if not request.get('reference_script'):raise
+        # A reference must never make otherwise usable audio fail alignment.
+        result=recognize(context(request.get('vocabulary',[])))
+        warnings.append('参考脚本辅助结果无法可靠对齐，该段已按音频重新识别，请校对专名。')
+        return result
 
 
 def run(job_dir):
@@ -79,21 +90,25 @@ def run(job_dir):
         samples, rate = sf.read(job_dir / "audio.wav", dtype="float32")
     pieces = list(chunks(samples, rate))
     converter = OpenCC("t2s")
-    hints = context(request.get("vocabulary", []))
+    hints = context(request.get("vocabulary", []), request.get("reference_script", ""))
+    warnings = list(timeline.get("warnings", [])) if timeline else []
     words = []
     for index, (offset, audio) in enumerate(pieces):
         status("running", f"正在识别并对齐第 {index + 1} / {len(pieces)} 段…", 12 + round(80 * index / len(pieces)), device=device)
         if float(np.max(np.abs(audio))) < 0.0001:
             continue
-        results = model.transcribe(audio=(audio, rate), context=hints, language="Chinese", return_time_stamps=True)
-        for result in results:
-            if not result.text.strip():
-                continue
-            if not result.time_stamps:
-                raise RuntimeError("模型未返回时间戳，无法生成可靠字幕。")
-            for word in with_punctuation(result.time_stamps, result.text, converter.convert):
-                words.append(Word(word.text, word.start + offset, min(word.end + offset, duration)))
-    warnings = list(timeline.get('warnings', [])) if timeline else []
+        def recognize(hint):
+            results = model.transcribe(audio=(audio, rate), context=hint, language="Chinese", return_time_stamps=True)
+            aligned=[]
+            for result in results:
+                if not result.text.strip():continue
+                if not result.time_stamps:
+                    raise ValueError("模型未返回时间戳，无法生成可靠字幕。")
+                for word in with_punctuation(result.time_stamps,result.text,converter.convert):
+                    aligned.append(Word(word.text,word.start+offset,min(word.end+offset,duration)))
+            make_captions(aligned,max_chars=request['max_chars'])
+            return aligned
+        words.extend(recognize_with_reference_fallback(recognize,hints,request,warnings))
     if any(word.start == word.end for word in words):
         warnings.append('部分词语时间戳已合并到相邻词语，请校对这些字幕的起止时间。')
     captions = make_captions(words, max_chars=request["max_chars"])

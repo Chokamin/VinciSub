@@ -12,6 +12,8 @@ from vincisub.timeline import selection, snapshot, decode
 def main():
     from vincisub.storage import DATA
     vocabulary_path = DATA/"vocabulary.json"
+    reference_path = DATA/"reference-script.json"
+    reference_before = reference_path.read_bytes() if reference_path.exists() else None
     vocabulary_before = vocabulary_path.read_bytes() if vocabulary_path.exists() else None
     sample = Path(sys.argv[1]).resolve()
     if not sample.is_file():
@@ -80,6 +82,15 @@ def main():
         ui.QueueEvent(vocabulary_widgets['SaveVocabulary'],'Clicked',{})
         time.sleep(.3)
         assert json.loads(vocabulary_path.read_text(encoding='utf-8'))['terms'] == ['中文字幕工具']
+        ui.QueueEvent(widgets['ReferenceScript'],'Clicked',{});time.sleep(.3)
+        reference_widgets=ui.FindWindow('com.vincisub.native.reference').GetItems()
+        reference_widgets['Script'].PlainText='欢迎使用中文字幕工具。今天我们测试字幕识别。口播结束后去月球旅行。'
+        reference_widgets['UseScript'].Checked=True
+        ui.QueueEvent(reference_widgets['SaveScript'],'Clicked',{});time.sleep(.2)
+        ui.QueueEvent(widgets['ReferenceScript'],'Clicked',{});time.sleep(.2)
+        assert '去月球旅行' in reference_widgets['Script'].PlainText
+        reference_widgets['Script'].PlainText='取消不能覆盖'
+        ui.QueueEvent(reference_widgets['CancelScript'],'Clicked',{});time.sleep(.2)
         assert widgets['Track'].TopLevelItemCount() == 2
         assert all(widgets['Track'].TopLevelItem(n).CheckState[0] == 'Unchecked' for n in range(2))
         for n in range(2):
@@ -104,6 +115,7 @@ def main():
         assert status['state'] == 'done', status
         assert request['timeline']['track_indices'] == [1, 2]
         assert request['vocabulary'] == ['中文字幕工具']
+        assert '去月球旅行' in request['reference_script']
         result = json.loads((job/'result.json').read_text(encoding='utf-8'))
         assert all(1 <= row['start'] < row['end'] <= 5.001 for row in result['captions']), result
         assert not (job/'audio.wav').exists() and not (job/'source').exists()
@@ -125,6 +137,7 @@ def main():
             assert item.GetStart() == 90000 + round(caption['start']*25)
             assert item.GetEnd() == 90000 + round(caption['end']*25)
         time.sleep(1)
+        assert '月球' not in ''.join(c['text'] for c in result['captions'])
         original_second = (subtitles[1].GetName(),subtitles[1].GetStart(),subtitles[1].GetEnd())
         track_count = timeline.GetTrackCount('subtitle')
         assert 'Text' not in widgets and 'Apply' not in widgets and 'Offset' not in widgets
@@ -186,6 +199,9 @@ def main():
         vocabulary_widgets['UseVocabulary'].Checked = False
         ui.QueueEvent(vocabulary_widgets['SaveVocabulary'],'Clicked',{})
         time.sleep(.3)
+        ui.QueueEvent(widgets['ReferenceScript'],'Clicked',{});time.sleep(.2)
+        reference_widgets['UseScript'].Checked=False
+        ui.QueueEvent(reference_widgets['SaveScript'],'Clicked',{});time.sleep(.2)
         previous_job = job
         ui.QueueEvent(widgets['Generate'],'Clicked',{})
         deadline = time.monotonic()+150
@@ -204,6 +220,7 @@ def main():
             assert worker_status['state'] not in ('error','cancelled'),worker_status
         assert second_placement.get('state') == 'done',second_placement
         assert json.loads((job/'request.json').read_text(encoding='utf-8'))['vocabulary'] == []
+        assert json.loads((job/'request.json').read_text(encoding='utf-8'))['reference_script'] == ''
         assert timeline.GetTrackCount('subtitle') == track_count
         final_contents=[(i.GetStart(),i.GetEnd(),i.GetName()) for i in timeline.GetItemListInTrack('subtitle',track_count)]
         assert final_contents[:len(first_contents)] == first_contents
@@ -259,6 +276,10 @@ def main():
             ui.QueueEvent(window.GetItems()['Cancel'], 'Clicked', {})
             time.sleep(1)
             ui.QueueEvent(window, 'Close', {'close':True})
+        if reference_before is None:
+            reference_path.unlink(missing_ok=True)
+        else:
+            reference_path.write_bytes(reference_before)
         if vocabulary_before is None:
             vocabulary_path.unlink(missing_ok=True)
         else:

@@ -64,7 +64,8 @@ class JobsTests(unittest.TestCase):
     def test_vocabulary_is_snapshotted_in_request(self,which,popen):
         source=Path(self.temp.name)/'input.wav';source.write_bytes(b'test')
         words=['小蚕','小蚕','奇奇字幕']
-        self.jobs.start(path=source,vocabulary=words)
+        self.jobs.start(path=source,vocabulary=words,reference_script="参考口播稿")
         words.clear()
         request=json.loads((self.jobs.directory/'request.json').read_text(encoding='utf-8'))
         self.assertEqual(request['vocabulary'],['小蚕','奇奇字幕'])
+        self.assertEqual(request['reference_script'],'参考口播稿')
