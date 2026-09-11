@@ -28,14 +28,19 @@ class RealignTests(unittest.TestCase):
     def test_script_changes_invalidate_preview_and_require_text(self):
         from vincisub.optimize_ui import OptimizeWindow
         window=OptimizeWindow.__new__(OptimizeWindow)
-        window.items={'OptimizeScript':T(PlainText='参考稿'),'ScriptOptimize':T(Checked=True),'Realign':T(Checked=False),'Tail':T(Value=.15)}
-        key=window.key({'track':1})
-        window.items['OptimizeScript'].PlainText='新参考稿'
-        self.assertNotEqual(key,window.key({'track':1}))
-        window.items['OptimizeScript'].PlainText=''
-        with self.assertRaises(ValueError):window.key({'track':1})
-        window.items['ScriptOptimize'].Checked=False
-        self.assertEqual(window.key({'track':1})[-1],'')
+        from unittest.mock import patch
+        window.jobs=T(data='test-data')
+        window.items={'ScriptOptimize':T(Checked=True),'Realign':T(Checked=False),'Tail':T(Value=.15)}
+        with patch('vincisub.optimize_ui.reference.load') as load:
+            load.return_value=dict(text='参考稿',enabled=False)
+            key=window.key({'track':1})
+            self.assertEqual(key[-1],'参考稿')
+            load.return_value=dict(text='新参考稿',enabled=True)
+            self.assertNotEqual(key,window.key({'track':1}))
+            load.return_value=dict(text='',enabled=True)
+            with self.assertRaisesRegex(ValueError,'主面板'):window.key({'track':1})
+            window.items['ScriptOptimize'].Checked=False
+            self.assertEqual(window.key({'track':1})[-1],'')
 
     def test_cancel_stops_computation_without_applying(self):
         from unittest.mock import Mock

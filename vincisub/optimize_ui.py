@@ -13,7 +13,7 @@ class OptimizeWindow:
         self.parent=parent;self.sources=sources;self.apply=apply
         self.prepare_alignment=prepare_alignment;self.jobs=jobs;self.process=None;self.aligned=None;self.alignment_key=None
         self.id='com.vincisub.native.optimize'
-        self.window=dispatcher.AddWindow(dict(ID=self.id,WindowTitle='奇奇字幕 · 一键优化',Geometry=[300,120,680,650]),ui.VGroup([
+        self.window=dispatcher.AddWindow(dict(ID=self.id,WindowTitle='奇奇字幕 · 一键优化',Geometry=[300,160,680,520]),ui.VGroup([
             ui.ComboBox(dict(ID='OptimizeTrack',Weight=0)),
             ui.CheckBox(dict(ID='TrimEnding',Text='去掉句尾逗号、句号（保留句中标点及引号）',Checked=True,Weight=0)),
             ui.CheckBox(dict(ID='StripPunctuation',Text='去掉全部标点（优先于上一项）',Weight=0)),
@@ -22,7 +22,6 @@ class OptimizeWindow:
             ui.HGroup(dict(Weight=0),[ui.CheckBox(dict(ID='Realign',Text='重新对齐音频')),ui.Label(dict(Text='句尾保留（秒）',Weight=0)),ui.DoubleSpinBox(dict(ID='Tail',Minimum=0,Maximum=1,Decimals=2,Value=.15,Weight=0))]),
             ui.Label(dict(Text='使用主面板所选音轨，在原时间前后 1 秒内重新对齐。先计算预览，不可靠的条目保留时间并列出。',WordWrap=True,Weight=0)),
             ui.CheckBox(dict(ID='ScriptOptimize',Text='参考脚本优化（结合音频重新识别文字）',Weight=0)),
-            ui.TextEdit(dict(ID='OptimizeScript',AcceptRichText=False,PlaceholderText='可在生成字幕之后补填脚本，最多 6000 字；本次优化使用',MinimumSize=[0,80],MaximumSize=[16777215,120])),
             ui.TextEdit(dict(ID='OptimizePreview',ReadOnly=True,AcceptRichText=False)),
             ui.Label(dict(ID='OptimizeStatus',WordWrap=True,Weight=0)),
             ui.HGroup(dict(Weight=0),[ui.Button(dict(ID='CancelOptimize',Text='取消')),ui.Button(dict(ID='ApplyOptimize',Text='应用并同步'))]),
@@ -30,7 +29,6 @@ class OptimizeWindow:
         self.items=self.window.GetItems()
         for key in ['TrimEnding','StripPunctuation','FillGaps','Realign','ScriptOptimize']:
             self.window.On[key].Clicked=self.preview
-        self.window.On.OptimizeScript.TextChanged=self.preview
         self.window.On.Tail.ValueChanged=self.preview
         self.window.On.MaxGap.ValueChanged=self.preview
         self.window.On.OptimizeTrack.CurrentIndexChanged=self.preview
@@ -41,7 +39,6 @@ class OptimizeWindow:
 
     def open(self,event=None):
         self.aligned=None;self.alignment_key=None
-        self.items['OptimizeScript'].PlainText=reference.load(self.jobs.data)['text']
         self.options=self.sources()
         if not self.options:raise ValueError('请先生成字幕或读取全部字幕。')
         self.items['OptimizeTrack'].Clear()
@@ -49,8 +46,8 @@ class OptimizeWindow:
         self.preview();self.parent.Enabled=False;self.window.Show();self.window.Raise()
 
     def key(self,source):
-        script=reference.validate(self.items['OptimizeScript'].PlainText) if self.items['ScriptOptimize'].Checked else ''
-        if self.items['ScriptOptimize'].Checked and not script:raise ValueError('请先填写参考脚本。')
+        script=reference.load(self.jobs.data)['text'] if self.items['ScriptOptimize'].Checked else ''
+        if self.items['ScriptOptimize'].Checked and not script:raise ValueError('请先在主面板「参考脚本…」中填写并保存脚本。')
         return (source['track'],self.items['Tail'].Value,bool(self.items['Realign'].Checked),bool(self.items['ScriptOptimize'].Checked),script)
 
     def needs_model(self):
@@ -105,7 +102,7 @@ class OptimizeWindow:
     def poll(self):
         if self.process is None:return
         running=self.process.poll() is None
-        for key in ['OptimizeTrack','TrimEnding','StripPunctuation','FillGaps','MaxGap','Realign','Tail','ScriptOptimize','OptimizeScript','ApplyOptimize']:
+        for key in ['OptimizeTrack','TrimEnding','StripPunctuation','FillGaps','MaxGap','Realign','Tail','ScriptOptimize','ApplyOptimize']:
             self.items[key].Enabled=not running
         status=json.loads((self.directory/'status.json').read_text(encoding='utf-8'))
         self.items['OptimizeStatus'].Text=status['message']
