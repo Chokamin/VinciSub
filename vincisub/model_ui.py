@@ -29,7 +29,7 @@ class ModelManager:
             ui.ComboBox(dict(ID='ManagedModel',Weight=0)),
             ui.Label(dict(ID='ModelInfo',WordWrap=True,Weight=0)),
             ui.Label(dict(Text='本地下载位置',Weight=0)),
-            ui.LineEdit(dict(ID='ModelPath',ReadOnly=True,Weight=0)),
+            ui.HGroup(dict(Weight=0),[ui.LineEdit(dict(ID='ModelPath',ReadOnly=True)),ui.Button(dict(ID='OpenModelFolder',Text='在 Finder 中打开',Weight=0))]),
             ui.Label(dict(Text='时间对齐模型由两种识别模型共用。删除后，下次使用会重新下载。',WordWrap=True,Weight=0)),
             ui.Label(dict(ID='ModelProgress',WordWrap=True)),
             ui.Label(dict(ID='ModelStatus',WordWrap=True,Weight=0)),
@@ -41,6 +41,7 @@ class ModelManager:
         self.window.On.DownloadModel.Clicked=self.download
         self.window.On.CancelDownload.Clicked=lambda event:self.cancel()
         self.window.On.DeleteModel.Clicked=self.delete
+        self.window.On.OpenModelFolder.Clicked=self.open_folder
         self.window.On.CloseModels.Clicked=self.dismiss
         self.window.On[self.id].Close=self.dismiss
 
@@ -69,6 +70,18 @@ class ModelManager:
     def dismiss(self,event=None):
         self.window.Hide();self.parent.Enabled=True
         self.confirm=None;self.items['DeleteModel'].Text='删除本地模型'
+
+    def open_folder(self,event=None):
+        try:
+            folder=models.repo_path(self.entry['repo'],self.jobs.data)
+            exists=folder.is_dir()
+            if not exists:
+                folder=models.cache_root(self.jobs.data)
+                folder.mkdir(parents=True,exist_ok=True)
+            subprocess.run(['/usr/bin/open',str(folder)],check=True,capture_output=True,timeout=10)
+            self.items['ModelStatus'].Text='已在 Finder 中打开模型文件夹。' if exists else '模型尚未下载，已在 Finder 中打开下载目录。'
+        except Exception as error:
+            self.items['ModelStatus'].Text='无法打开文件夹：'+str(error)
 
     def download(self,event=None):
         if self.busy() or self.is_busy():return

@@ -85,3 +85,33 @@ class ModelTests(unittest.TestCase):
         self.assertIn('25%',manager.items['ModelProgress'].Text)
         self.assertFalse(manager.items['DeleteModel'].Enabled)
         manager.cancel();manager.jobs.cancel.assert_called_once()
+
+    def test_open_folder_uses_selected_model_and_missing_model_parent(self):
+        from vincisub.model_ui import ModelManager
+        with tempfile.TemporaryDirectory(prefix='奇奇 字幕 ') as folder:
+            data=Path(folder);root,_=fixture(data)
+            manager=ModelManager.__new__(ModelManager)
+            manager.jobs=SimpleNamespace(data=data)
+            manager.items={'ModelStatus':SimpleNamespace(Text='')}
+            manager.entry={'repo':models.REPOS[0]}
+            with patch('vincisub.model_ui.subprocess.run') as run:
+                manager.open_folder()
+                self.assertEqual(run.call_args.args[0],['/usr/bin/open',str(root)])
+                self.assertIn('模型文件夹',manager.items['ModelStatus'].Text)
+                manager.entry={'repo':models.ALIGNER}
+                manager.open_folder()
+                self.assertEqual(run.call_args.args[0],['/usr/bin/open',str(models.cache_root(data))])
+                self.assertFalse(models.repo_path(models.ALIGNER,data).exists())
+                self.assertIn('尚未下载',manager.items['ModelStatus'].Text)
+
+    def test_open_folder_reports_launch_failure(self):
+        from vincisub.model_ui import ModelManager
+        with tempfile.TemporaryDirectory() as folder:
+            manager=ModelManager.__new__(ModelManager)
+            manager.jobs=SimpleNamespace(data=Path(folder))
+            manager.entry={'repo':models.REPOS[0]}
+            manager.items={'ModelStatus':SimpleNamespace(Text='')}
+            with patch('vincisub.model_ui.subprocess.run',side_effect=OSError('Finder unavailable')):
+                manager.open_folder()
+            self.assertIn('无法打开文件夹',manager.items['ModelStatus'].Text)
+            self.assertTrue(models.cache_root(Path(folder)).is_dir())

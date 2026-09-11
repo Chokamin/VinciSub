@@ -41,6 +41,8 @@ def main():
             manager=ui.FindWindow('com.vincisub.native.models');items=manager.GetItems()
             assert '下载未完成' in items['ModelInfo'].Text
             assert items['ModelPath'].Text==str(dest)
+            ui.QueueEvent(items['OpenModelFolder'],'Clicked',{});time.sleep(1)
+            assert '已在 Finder 中打开模型文件夹' in items['ModelStatus'].Text
             ui.QueueEvent(items['DownloadModel'],'Clicked',{})
             status_path=data/'model-download.json';seen_running=False
             deadline=time.monotonic()+100
@@ -62,12 +64,15 @@ def main():
             assert dest.exists()
             ui.QueueEvent(items['DeleteModel'],'Clicked',{});time.sleep(.5)
             assert not dest.exists()
+            ui.QueueEvent(items['OpenModelFolder'],'Clicked',{});time.sleep(1)
+            assert '尚未下载' in items['ModelStatus'].Text
+            assert not dest.exists()
             assert models.local_snapshot(repo) is not None
             ui.QueueEvent(items['CloseModels'],'Clicked',{});time.sleep(.2)
             ui.QueueEvent(window,'Close',{'close':True});time.sleep(.5)
             assert not ui.FindWindow('com.vincisub.native')
             window=None
-            print(json.dumps(dict(download_progress=True,native_delete=True,user_models_preserved=True)))
+            print(json.dumps(dict(native_finder=True,download_progress=True,native_delete=True,user_models_preserved=True)))
         finally:
             if window:
                 manager=ui.FindWindow('com.vincisub.native.models')
