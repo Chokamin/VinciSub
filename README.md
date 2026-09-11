@@ -1,4 +1,4 @@
-# VinciSub
+# VinciSub · 奇奇字幕
 
 达芬奇原生 Python 脚本，用 Qwen3-ASR 在本机识别中文并生成 SRT。所有操作在达芬奇的脚本窗口中完成，无网页界面或本地 HTTP 服务。
 
@@ -20,6 +20,8 @@
 ## 安装（macOS）
 
 已实测：Apple Silicon、DaVinci Resolve Studio 21.1、Python 3.12、Qwen3-ASR-0.6B + Qwen3-ForcedAligner-0.6B，使用 MPS 推理。其他版本及 1.7B 模型尚未实测。
+
+从 [GitHub Releases](https://github.com/Chokamin/VinciSub/releases) 下载源码包并解压，或运行 `git clone https://github.com/Chokamin/VinciSub.git`。
 
 安装 [uv](https://docs.astral.sh/uv/getting-started/installation/) 和 FFmpeg（`brew install ffmpeg`），然后在项目目录执行：
 
@@ -110,4 +112,4 @@ git diff --check
 
 主面板右上角「检查更新」打开原生窗口，显示当前版本、检查结果和更新说明；发现新版后点击「查看新版」打开发布页。检查在后台执行，可关闭窗口或重试；不会自动下载或覆盖本机文件。
 
-目前尚未发布 GitHub 仓库，`update-source.json` 的 `repository` 留空，界面会明确提示尚未配置。发布时将其设为 `用户名/仓库名`，发布公开正式 Release，标签采用 `v1.2.3`，并同步更新 `pyproject.toml` 与 `vincisub/__init__.py` 版本号。检查使用 [GitHub 最新正式 Release API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)，不跟随普通 Git 提交或预发布版本。
+发布源为 [Chokamin/VinciSub](https://github.com/Chokamin/VinciSub)，配置位于 `update-source.json`。后续发布正式 Release 时，标签采用 `v1.2.3`，并同步更新 `pyproject.toml` 与 `vincisub/__init__.py` 版本号。检查使用 [GitHub 最新正式 Release API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)，不跟随普通 Git 提交或预发布版本。

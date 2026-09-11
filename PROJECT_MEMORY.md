@@ -231,6 +231,14 @@
 - 验证结果：102 项单元测试通过；原生新版本模拟、重试、链接回调、关闭及真实主按钮空配置流程通过；截图确认主面板和更新窗口布局。未写入时间线。
 - 剩余问题：等待实际 GitHub 仓库与首个正式 Release 后配置发布源并验证真实联网结果；本轮新版响应为模拟数据。
 
+### 2026-09-11：准备 GitHub 首次公开发布
+
+- 需求：用户明确要求发布到 GitHub 并选择公开仓库。
+- 改动：创建 Chokamin/VinciSub 公开仓库，关联 origin，配置更新源，补充下载入口与 v0.1.0 发布说明，更新发布源测试与原生验收脚本。
+- 关键文件：update-source.json、README.md、RELEASE_NOTES.md、tests/test_updates.py、scripts/verify_updates.py。
+- 验证结果：103 项测试通过，差异检查通过；全部 Git 历史的缓存路径和常见凭据模式检查通过；模型、素材、虚拟环境均未跟踪。
+- 剩余问题：待推送、创建 Release 和验证真实更新检查后记录最终状态。
+
 ## 关键文件
 
 - PROJECT_MEMORY.md、DECISIONS.md、HANDOFF.md、CLAUDE.md：跨对话协作入口。

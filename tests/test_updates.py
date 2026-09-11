@@ -56,3 +56,7 @@ class UpdateTests(unittest.TestCase):
         import tomllib
         from vincisub.storage import ROOT
         self.assertEqual(tomllib.loads((ROOT/'pyproject.toml').read_text())['project']['version'], __version__)
+
+    def test_published_source(self):
+        from vincisub.storage import ROOT
+        self.assertEqual(json.loads((ROOT/'update-source.json').read_text())['repository'], 'Chokamin/VinciSub')
