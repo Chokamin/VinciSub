@@ -7,7 +7,7 @@ from pathlib import Path
 from .jobs import Jobs
 from .catalog import read_all, edit_job
 from . import vocabulary
-from .model_ui import ModelManager, progress_text
+from .model_ui import ModelManager, update_download_progress
 from .storage import ROOT, write_json
 from .timeline import describe_timeline, snapshot
 
@@ -253,8 +253,7 @@ def launch(resolve, fusion, bmd):
     def poll(event=None):
         download_status = model_manager.status() if model_manager.busy() else jobs.status()
         model_manager.poll()
-        items['DownloadProgress'].Text = progress_text(download_status,model_manager.tick)
-        items['DownloadProgress'].Visible = download_status.get('phase') == 'download' and download_status.get('state') == 'running'
+        update_download_progress(items['DownloadProgress'],download_status,model_manager.tick)
         if model_manager.busy():
             for key in ['Generate','VocabularySettings','ReadAll','Track','Refresh','Model','Chars','Apply','Export','Import']:
                 items[key].Enabled = False

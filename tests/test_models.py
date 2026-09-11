@@ -115,3 +115,23 @@ class ModelTests(unittest.TestCase):
                 manager.open_folder()
             self.assertIn('无法打开文件夹',manager.items['ModelStatus'].Text)
             self.assertTrue(models.cache_root(Path(folder)).is_dir())
+
+    def test_download_visibility_through_wait_download_and_completion(self):
+        from vincisub.model_ui import update_download_progress
+        control=SimpleNamespace(Text='',Hidden=True)
+        status=dict(state='running',phase='download',total=0)
+        update_download_progress(control,status,1)
+        self.assertFalse(control.Hidden)
+        first=control.Text
+        update_download_progress(control,status,2)
+        self.assertNotEqual(first,control.Text)
+        status.update(total=100,downloaded=59,progress=59)
+        update_download_progress(control,status,3)
+        self.assertFalse(control.Hidden)
+        self.assertIn('59%',control.Text)
+        for state in ('done','error','cancelled'):
+            update_download_progress(control,dict(status,state=state),4)
+            self.assertTrue(control.Hidden)
+        update_download_progress(control,dict(state='running',phase='loading'),5)
+        self.assertTrue(control.Hidden)
+        self.assertEqual(control.Text,'')

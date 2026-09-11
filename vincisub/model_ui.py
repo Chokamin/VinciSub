@@ -19,6 +19,12 @@ def progress_text(status,tick=0):
     return f'📦 {html.escape(status.get("model", "").split("/")[-1])}'+ '·'*(tick%3+1)+f'<br>{bar}  {percent}%<br>{models.size_label(done)} / {models.size_label(total)}'
 
 
+def update_download_progress(control,status,tick):
+    control.Text=progress_text(status,tick)
+    # UIManager's Visible assignment does not clear an explicitly Hidden widget.
+    control.Hidden=not (status.get('phase')=='download' and status.get('state')=='running')
+
+
 class ModelManager:
     def __init__(self,ui,dispatcher,parent,jobs,is_busy):
         self.jobs=jobs;self.parent=parent;self.is_busy=is_busy
