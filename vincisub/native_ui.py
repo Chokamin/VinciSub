@@ -37,7 +37,7 @@ def launch(resolve, fusion, bmd):
             ui.HGroup({"Weight": 0}, [ui.Label({"Text": "开始 / 结束（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Start", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.DoubleSpinBox({"ID": "End", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.Button({"ID": "Apply", "Text": "保存当前条"})]),
             ui.LineEdit({"ID": "Text", "PlaceholderText": "选择一条字幕后编辑文字", "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.Label({"Text": "整体偏移（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Offset", "Decimals": 3, "Minimum": -86400, "Maximum": 86400, "Value": 0}), ui.Button({"ID": "Export", "Text": "保存 SRT"}), ui.Button({"ID": "Import", "Text": "写入字幕轨"})]),
-            ui.Label({"Text": "识别完成后自动写入当前时间线的字幕轨。定位期间请等待，不要操作达芬奇；写入后请在字幕轨内校对。", "Weight": 0, "WordWrap": True}),
+            ui.Label({"Text": "识别完成后自动写入当前时间线的字幕轨。写入后请在字幕轨内校对。", "Weight": 0, "WordWrap": True}),
         ]))
     items = window.GetItems()
     items["Model"].AddItems(["Qwen3-ASR 0.6B · 轻量", "Qwen3-ASR 1.7B · 标准"])
@@ -141,7 +141,7 @@ def launch(resolve, fusion, bmd):
         finally:
             log.close()
         state['placing'] = True
-        window.Hide()
+        poll()
 
     def cancel(event=None):
         if state['placing']:
@@ -151,6 +151,9 @@ def launch(resolve, fusion, bmd):
 
     def poll(event=None):
         if state['placing']:
+            for key in ['Generate', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End', 'Offset']:
+                items[key].Enabled = False
+            items['Cancel'].Enabled = True
             path = jobs.directory/'placement.json'
             placement = json.loads(path.read_text(encoding='utf-8'))
             items['Status'].Text = placement['message']
@@ -158,8 +161,6 @@ def launch(resolve, fusion, bmd):
                 state['placing'] = False
                 if placement['state'] == 'running':
                     items['Status'].Text = '字幕写入进程中断，请检查本次 VinciSub 字幕轨。'
-                window.Show()
-                window.ActivateWindow()
             return
         status = jobs.status()
         signature = (status["state"], status["message"])

@@ -1,28 +1,15 @@
-"""Place captions in the source timeline via API plus the native Inspector bridge."""
+"""Write a complete SRT to the source timeline through the media-list API."""
 import hashlib
 import json
 import math
 import os
-import plistlib
-import platform
-import tempfile
-import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 from .resolve import connect, import_media
-from .storage import ROOT, DATA, write_json
-
-
-def timecode(frame, fps):
-    frame = int(frame)
-    if frame < 0 or frame >= fps * 86400:
-        raise ValueError('字幕位置超出有效时间码范围。')
-    seconds, f = divmod(frame, fps)
-    minutes, s = divmod(seconds, 60)
-    h, m = divmod(minutes, 60)
-    return f'{h:02}:{m:02}:{s:02}:{f:02}'
+from .storage import DATA, write_json
 
 
 def frame_rows(result, timeline):
@@ -44,50 +31,11 @@ def frame_rows(result, timeline):
     return fps, rows
 
 
-def bridge(request):
-    if sys.platform != 'darwin':
-        raise ValueError('自动落轨当前仅支持 macOS。')
-    bundle = DATA / 'bin' / 'VinciSub Helper.app'
-    binary = bundle / 'Contents' / 'MacOS' / 'ResolveCaptionBridge'
-    source = ROOT / 'native' / 'ResolveCaptionBridge.swift'
-    if not binary.is_file() or binary.stat().st_mtime < source.stat().st_mtime:
-        binary.parent.mkdir(parents=True, exist_ok=True)
-        info = dict(CFBundleExecutable=binary.name, CFBundleIdentifier='com.vincisub.caption-helper',
-                    CFBundleName='VinciSub Helper', CFBundlePackageType='APPL', CFBundleVersion='1',
-                    LSUIElement=True, NSAppleEventsUsageDescription='将识别结果定位到达芬奇原始时间线的字幕轨。')
-        (bundle/'Contents'/'Info.plist').write_bytes(plistlib.dumps(info))
-        build = subprocess.run(['/usr/bin/swiftc', '-target', platform.machine()+'-apple-macosx13.0', '-module-cache-path', str(DATA/'swift-cache'), str(source), '-o', str(binary)], capture_output=True, timeout=180)
-        if build.returncode:
-            (DATA/'helper-build.log').write_bytes(build.stderr)
-            raise RuntimeError('无法构建界面助手，请检查 Xcode Command Line Tools 和 .vincisub/helper-build.log。')
-        signed = subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', '--entitlements',
-                                 str(ROOT/'native'/'Helper.entitlements'), str(bundle)], capture_output=True, timeout=30)
-        if signed.returncode:
-            binary.unlink(missing_ok=True)
-            raise RuntimeError('无法签名 VinciSub 界面助手。')
-    # Launch as its own app so macOS can request permissions for VinciSub Helper.
-    # Resolve's hardened runtime has no Apple-event automation entitlement.
-    with tempfile.TemporaryDirectory(prefix='bridge-', dir=DATA) as temp:
-        request_path, response_path = Path(temp)/'request.json', Path(temp)/'response.json'
-        write_json(request_path, request)
-        process = subprocess.run(['/usr/bin/open', '-g', '-n', str(bundle), '--args',
-                                  str(request_path), str(response_path)], capture_output=True, timeout=20)
-        deadline = time.monotonic() + 60
-        while not response_path.exists() and not process.returncode and time.monotonic() < deadline:
-            time.sleep(.1)
-        try:
-            response = json.loads(response_path.read_text(encoding='utf-8'))
-        except (ValueError, OSError) as error:
-            raise RuntimeError('字幕界面助手未正常返回。') from error
-        if process.returncode or not response.get('ok'):
-            raise RuntimeError(response.get('message', '字幕界面操作失败。'))
-
-
 def fingerprint(result):
     return hashlib.sha256(json.dumps(result, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def place(directory, resolve=None, control=bridge):
+def place(directory, resolve=None):
     directory = Path(directory)
     result = json.loads((directory/'result.json').read_text(encoding='utf-8'))
     metadata = json.loads((directory/'resolve.json').read_text(encoding='utf-8'))
@@ -113,8 +61,7 @@ def place(directory, resolve=None, control=bridge):
             if [(i.GetUniqueId(), i.GetStart(), i.GetEnd(), i.GetName()) for i in actual] == [tuple(x) for x in receipt['items']]:
                 return receipt['track']
         raise ValueError('本任务已有字幕写入记录；请在达芬奇字幕轨内校对，避免重复写入。')
-    control(dict(command='preflight'))
-    old_time, old_page = timeline.GetCurrentTimecode(), resolve.GetCurrentPage()
+    old_time = timeline.GetCurrentTimecode()
     track = timeline.GetTrackCount('subtitle') + 1
     name = 'VinciSub ' + directory.name[:8]
     ids, created = set(), False
@@ -127,8 +74,6 @@ def place(directory, resolve=None, control=bridge):
             raise RuntimeError('写入期间切换了项目或时间线，已停止。')
     try:
         check()
-        resolve.OpenPage('edit')
-        control(dict(command='activate', project=project.GetName()))
         if not timeline.AddTrack('subtitle'):
             raise RuntimeError('无法创建本次字幕轨。')
         created = True
@@ -141,60 +86,44 @@ def place(directory, resolve=None, control=bridge):
             raise RuntimeError('无法启用本次字幕轨。')
         time.sleep(.3)  # Resolve applies the active subtitle track asynchronously.
         from .subtitles import Caption, to_srt
-        items = []
-        # Append and position one caption at a time in chronological order.
-        # Extending its start leftward never crosses an already placed caption.
-        for number, target in enumerate(rows, 1):
-            check()
-            write_json(directory/'placement.json', dict(state='running', message=f'正在放入字幕轨 {number}/{len(rows)}'))
-            path = directory/f'placement-{number:05}.srt'
-            path.write_text(to_srt([Caption(0, (target['end']-target['start'])/fps, target['text'])]), encoding='utf-8-sig')
-            media = import_media(project.GetMediaPool(), path)
-            if not media:
-                raise RuntimeError('无法导入字幕素材。')
-            # NEVER pass source frame bounds to SRT (known Resolve crash).
-            before_ids = {i.GetUniqueId() for n in range(1, track+1)
-                          for i in timeline.GetItemListInTrack('subtitle', n) or []}
-            project.GetMediaPool().AppendToTimeline([dict(mediaPoolItem=media[0], trackIndex=track)])
-            added = []
-            for _ in range(15):
-                current = timeline.GetItemListInTrack('subtitle', track) or []
-                added = [i for i in current if i.GetUniqueId() not in ids]
-                if added:
-                    break
-                time.sleep(.1)
-            ids.update(i.GetUniqueId() for i in added)
-            misplaced = [i for n in range(1, track)
-                         for i in timeline.GetItemListInTrack('subtitle', n) or []
-                         if i.GetUniqueId() not in before_ids]
-            if misplaced or len(added) != 1 or added[0].GetName() != target['text']:
-                write_json(directory/'placement-diagnostic.json', dict(
-                    added=[i.GetName() for i in added], misplaced=[i.GetName() for i in misplaced], target=target['text']))
-                raise RuntimeError('字幕导入轨道、数量或文字不一致。')
-            item = added[0]
-            items.append(item)
-            old_start, old_end = int(item.GetStart()), int(item.GetEnd())
-            if old_start < timeline.GetStartFrame() + result['duration'] * fps:
-                raise RuntimeError('字幕追加位置不符合预期，已停止自动选择。')
-            timeline.SetCurrentTimecode(timecode(old_start, fps))
-            control(dict(command='select', project=project.GetName()))
-            # Resolve's selected-item query may omit subtitle generators.
-            # The bridge requires a unique Inspector text AND both old timecodes
-            # before changing either field; API readback then verifies the item.
-            check()
-            control(dict(command='edit', project=project.GetName(), text=target['text'],
-                         old_start=timecode(old_start,fps), old_end=timecode(old_end,fps),
-                         start=timecode(target['start'],fps), end=timecode(target['end'],fps)))
-            for _ in range(10):
-                if (item.GetStart(), item.GetEnd()) == (target['start'], target['end']):
-                    break
-                time.sleep(.1)
-            if (item.GetStart(), item.GetEnd(), item.GetName()) != (target['start'], target['end'], target['text']):
-                raise RuntimeError('字幕位置回读验证失败。')
+        start = timeline.GetStartFrame()
+        path = directory/f'placement-{uuid.uuid4().hex}.srt'
+        path.write_text(to_srt([Caption((r['start']-start)/fps, (r['end']-start)/fps, r['text'])
+                                for r in rows]), encoding='utf-8-sig')
         check()
+        write_json(directory/'placement.json', dict(state='running', message=f'正在写入 {len(rows)} 条字幕…'))
+        media = import_media(project.GetMediaPool(), path)
+        if not media or len(media) != 1:
+            raise RuntimeError('无法导入字幕素材。')
+        before_ids = {i.GetUniqueId() for n in range(1, track+1)
+                      for i in timeline.GetItemListInTrack('subtitle', n) or []}
+        check()
+        # The media-item list overload respects the SRT's timeline-relative times.
+        # A clipInfo dict appends SRT at the tail; source frame bounds can crash Resolve.
+        append_error = None
+        try:
+            project.GetMediaPool().AppendToTimeline(media)
+        except Exception as error:
+            append_error = error
+        items = []
+        for _ in range(20):
+            items = timeline.GetItemListInTrack('subtitle', track) or []
+            if len(items) >= len(rows):
+                break
+            time.sleep(.1)
+        ids.update(i.GetUniqueId() for i in items if i.GetUniqueId() not in before_ids)
+        misplaced = [i for n in range(1, track)
+                     for i in timeline.GetItemListInTrack('subtitle', n) or []
+                     if i.GetUniqueId() not in before_ids]
+        if append_error:
+            raise RuntimeError('字幕追加失败。') from append_error
+        check()
+        items = sorted(items, key=lambda i: i.GetStart())
         actual = [(i.GetUniqueId(), i.GetStart(), i.GetEnd(), i.GetName()) for i in items]
-        if [(i.GetStart(), i.GetEnd(), i.GetName()) for i in items] != [(r['start'], r['end'], r['text']) for r in rows]:
-            raise RuntimeError('整轨字幕最终验证失败。')
+        if misplaced or [v[1:] for v in actual] != [(r['start'],r['end'],r['text']) for r in rows]:
+            write_json(directory/'placement-diagnostic.json', dict(actual=actual, expected=rows,
+                       misplaced=[i.GetUniqueId() for i in misplaced]))
+            raise RuntimeError('字幕轨道、文字或位置回读验证失败。')
         write_json(receipt_path, dict(fingerprint=fingerprint(result), track=track, items=actual))
         return track
     except Exception:
@@ -213,7 +142,6 @@ def place(directory, resolve=None, control=bridge):
     finally:
         if identity():
             timeline.SetCurrentTimecode(old_time)
-            resolve.OpenPage(old_page)
 
 
 def main():

@@ -61,7 +61,11 @@ def main():
         write_json(output/'resolve.json', metadata)
         rows = [dict(start=.12,end=1.12,text='第一条字幕'),dict(start=2.2,end=3.6,text='第二条字幕'),dict(start=5,end=7.6,text='第三条字幕')]
         write_json(output/'result.json', dict(captions=rows,duration=8.68,offset=0))
+        timeline.SetCurrentTimecode('01:00:06:00')
+        old_time, old_page = timeline.GetCurrentTimecode(), resolve.GetCurrentPage()
         track = place(output, resolve)
+        assert timeline.GetCurrentTimecode() == old_time
+        assert resolve.GetCurrentPage() == old_page
         captions = timeline.GetItemListInTrack('subtitle',track)
         assert [(i.GetName(),i.GetStart(),i.GetEnd()) for i in captions] == [(c['text'],90000+round(c['start']*25),90000+round(c['end']*25)) for c in rows]
         assert state() == before
