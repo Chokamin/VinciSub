@@ -9,6 +9,7 @@ from .catalog import read_all, edit_job, track_job
 from .optimize_ui import OptimizeWindow
 from . import vocabulary, reference
 from .reference_ui import ReferenceWindow
+from .update_ui import UpdateWindow
 from .model_ui import ModelManager, DownloadWindow
 from .storage import ROOT, write_json
 from .timeline import describe_timeline, snapshot
@@ -29,7 +30,7 @@ def launch(resolve, fusion, bmd):
     window = dispatcher.AddWindow(
         {"ID": WINDOW_ID, "WindowTitle": "VinciSub · 奇奇字幕", "Geometry": [180, 140, 800, 700]},
         ui.VGroup([
-            ui.Label({"Text": "VinciSub  ·  奇奇字幕", "Weight": 0, "Font": ui.Font({"PixelSize": 22, "Bold": True})}),
+            ui.HGroup({"Weight": 0}, [ui.Label({"Text": "VinciSub  ·  奇奇字幕", "Font": ui.Font({"PixelSize": 22, "Bold": True})}), ui.Button({"ID": "CheckUpdate", "Text": "检查更新", "Weight": 0})]),
             ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Refresh", "Text": "刷新时间线 / 音轨"}), ui.Button({"ID": "ReferenceScript", "Text": "参考脚本…", "Weight": 0}), ui.Button({"ID": "VocabularySettings", "Text": "词库设置…", "Weight": 0}), ui.Button({"ID": "ModelManager", "Text": "模型管理…", "Weight": 0})]),
             ui.Label({"ID": "Timeline", "Weight": 0}),
             ui.Label({"Text": "音轨（可多选，不勾选时自动识别）", "Weight": 0}),
@@ -109,6 +110,7 @@ def launch(resolve, fusion, bmd):
     state = {"catalog": None, "rows": [], "selected": None, "loaded": None, "status": None, "track_ids": [], "timeline_id": None, "range": None, "placement": None, "auto_place": None, "placing": False}
 
     reference_window = ReferenceWindow(ui,dispatcher,window,jobs.data)
+    update_window = UpdateWindow(ui,dispatcher,window)
 
     model_manager = ModelManager(ui,dispatcher,window,jobs,lambda:jobs.busy() or state["placing"])
 
@@ -323,6 +325,7 @@ def launch(resolve, fusion, bmd):
     download_window = DownloadWindow(ui,dispatcher,model_manager.cancel)
 
     def poll(event=None):
+        update_window.poll()
         optimize_window.poll()
         if optimize_window.process is not None:
             return
@@ -398,7 +401,7 @@ def launch(resolve, fusion, bmd):
         save()
         dispatcher.ExitLoop()
 
-    for key, callback in {"Optimize": optimize_window.open, "ReferenceScript": reference_window.open, "ModelManager": model_manager.open, "VocabularySettings": open_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Export": export, "Import": import_result}.items():
+    for key, callback in {"CheckUpdate": update_window.open, "Optimize": optimize_window.open, "ReferenceScript": reference_window.open, "ModelManager": model_manager.open, "VocabularySettings": open_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Export": export, "Import": import_result}.items():
         window.On[key].Clicked = guard(callback)
     window.On.Captions.ItemClicked = guard(select)
     window.On.Captions.ItemDoubleClicked = guard(edit)
@@ -420,6 +423,7 @@ def launch(resolve, fusion, bmd):
         download_window.close()
         optimize_window.close()
         reference_window.close()
+        update_window.close()
         model_manager.close()
         vocabulary_window.Hide()
         vocabulary_window.ID = vocabulary_window_id + ".closed." + str(id(vocabulary_window))
