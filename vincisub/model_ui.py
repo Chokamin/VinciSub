@@ -19,10 +19,41 @@ def progress_text(status,tick=0):
     return f'📦 {html.escape(status.get("model", "").split("/")[-1])}'+ '·'*(tick%3+1)+f'<br>{bar}  {percent}%<br>{models.size_label(done)} / {models.size_label(total)}'
 
 
-def update_download_progress(control,status,tick):
-    control.Text=progress_text(status,tick)
-    # UIManager's Visible assignment does not clear an explicitly Hidden widget.
-    control.Hidden=not (status.get('phase')=='download' and status.get('state')=='running')
+class DownloadWindow:
+    """A dedicated window: all children participate in layout from creation."""
+    def __init__(self,ui,dispatcher,cancel):
+        self.id='com.vincisub.native.download'
+        self.active=False;self.dismissed=False;self.cancel=cancel
+        self.window=dispatcher.AddWindow(dict(ID=self.id,WindowTitle='奇奇字幕 · 正在下载模型',Geometry=[420,260,540,240]),ui.VGroup([
+            ui.Label(dict(Text='正在为字幕准备模型',Weight=0,Font=ui.Font(dict(PixelSize=20,Bold=True)))),
+            ui.Label(dict(ID='Progress',WordWrap=True,MinimumSize=[480,100])),
+            ui.Label(dict(Text='下载完成后自动继续。已下载的文件会保留。',Weight=0)),
+            ui.HGroup(dict(Weight=0),[ui.Button(dict(ID='Background',Text='后台下载')),ui.Button(dict(ID='StopDownload',Text='取消下载'))]),
+        ]))
+        self.items=self.window.GetItems()
+        self.window.On.Background.Clicked=self.dismiss
+        self.window.On.StopDownload.Clicked=self.stop
+        self.window.On[self.id].Close=self.dismiss
+
+    def dismiss(self,event=None):
+        self.dismissed=True;self.window.Hide()
+
+    def stop(self,event=None):
+        self.cancel();self.window.Hide()
+
+    def update(self,status,tick):
+        active=status.get('phase')=='download' and status.get('state')=='running'
+        if active:
+            self.items['Progress'].Text=progress_text(status,tick)
+            if not self.active and not self.dismissed:
+                self.window.Show();self.window.Raise()
+        else:
+            if self.active:self.window.Hide()
+            self.dismissed=False
+        self.active=active
+
+    def close(self):
+        self.window.Hide();self.window.ID=self.id+'.closed.'+str(id(self.window))
 
 
 class ModelManager:

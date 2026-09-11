@@ -7,7 +7,7 @@ from pathlib import Path
 from .jobs import Jobs
 from .catalog import read_all, edit_job
 from . import vocabulary
-from .model_ui import ModelManager, update_download_progress
+from .model_ui import ModelManager, DownloadWindow
 from .storage import ROOT, write_json
 from .timeline import describe_timeline, snapshot
 
@@ -38,7 +38,6 @@ def launch(resolve, fusion, bmd):
             ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Generate", "Text": "生成字幕"}), ui.Button({"ID": "Cancel", "Text": "取消任务"})]),
             ui.Button({"ID": "ReadAll", "Text": "读取全部字幕", "Weight": 0}),
             ui.Label({"ID": "Status", "WordWrap": True, "MinimumSize": [0, 45], "Weight": 0}),
-            ui.Label({"ID": "DownloadProgress", "Text": "", "WordWrap": True, "Weight": 0, "Hidden": True}),
             ui.Tree({"ID": "Captions", "Events": {"ItemClicked": True, "ItemDoubleClicked": True}, "ColumnCount": 5, "RootIsDecorated": False, "AlternatingRowColors": True}),
             ui.HGroup({"Weight": 0}, [ui.Label({"Text": "开始 / 结束（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Start", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.DoubleSpinBox({"ID": "End", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.Button({"ID": "Apply", "Text": "保存并同步"})]),
             ui.LineEdit({"ID": "Text", "PlaceholderText": "选择一条字幕后编辑文字", "Weight": 0}),
@@ -250,10 +249,12 @@ def launch(resolve, fusion, bmd):
         else:
             jobs.cancel()
 
+    download_window = DownloadWindow(ui,dispatcher,model_manager.cancel)
+
     def poll(event=None):
         download_status = model_manager.status() if model_manager.busy() else jobs.status()
         model_manager.poll()
-        update_download_progress(items['DownloadProgress'],download_status,model_manager.tick)
+        download_window.update(download_status,model_manager.tick)
         if model_manager.busy():
             for key in ['Generate','VocabularySettings','ReadAll','Track','Refresh','Model','Chars','Apply','Export','Import']:
                 items[key].Enabled = False
@@ -341,6 +342,7 @@ def launch(resolve, fusion, bmd):
         dispatcher.RunLoop()
     finally:
         timer.Stop()
+        download_window.close()
         model_manager.close()
         vocabulary_window.Hide()
         vocabulary_window.ID = vocabulary_window_id + ".closed." + str(id(vocabulary_window))

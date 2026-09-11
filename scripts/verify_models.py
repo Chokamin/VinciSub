@@ -44,17 +44,21 @@ def main():
             ui.QueueEvent(items['OpenModelFolder'],'Clicked',{});time.sleep(1)
             assert '已在 Finder 中打开模型文件夹' in items['ModelStatus'].Text
             ui.QueueEvent(items['DownloadModel'],'Clicked',{})
-            status_path=data/'model-download.json';seen_running=False
+            status_path=data/'model-download.json';seen_running=False;seen_popup=False
             deadline=time.monotonic()+100
             while time.monotonic()<deadline:
                 time.sleep(.1)
                 if not status_path.exists():continue
                 status=json.loads(status_path.read_text(encoding='utf-8'))
+                popup=ui.FindWindow('com.vincisub.native.download')
+                if popup and popup.GetItems()['Progress'].Text:
+                    seen_popup=True
                 if status['state']=='running':
                     seen_running=True
                 if status['state'] in ('done','error'):break
             assert status['state']=='done',status
             assert seen_running
+            assert seen_popup, 'Download must open its own window'
             assert status['total']>0 and status['downloaded']==status['total'],status
             time.sleep(1)
             assert '100%' in items['ModelProgress'].Text,items['ModelProgress'].Text

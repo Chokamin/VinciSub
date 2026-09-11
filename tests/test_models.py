@@ -116,22 +116,25 @@ class ModelTests(unittest.TestCase):
             self.assertIn('无法打开文件夹',manager.items['ModelStatus'].Text)
             self.assertTrue(models.cache_root(Path(folder)).is_dir())
 
-    def test_download_visibility_through_wait_download_and_completion(self):
-        from vincisub.model_ui import update_download_progress
-        control=SimpleNamespace(Text='',Hidden=True)
-        status=dict(state='running',phase='download',total=0)
-        update_download_progress(control,status,1)
-        self.assertFalse(control.Hidden)
-        first=control.Text
-        update_download_progress(control,status,2)
-        self.assertNotEqual(first,control.Text)
-        status.update(total=100,downloaded=59,progress=59)
-        update_download_progress(control,status,3)
-        self.assertFalse(control.Hidden)
-        self.assertIn('59%',control.Text)
-        for state in ('done','error','cancelled'):
-            update_download_progress(control,dict(status,state=state),4)
-            self.assertTrue(control.Hidden)
-        update_download_progress(control,dict(state='running',phase='loading'),5)
-        self.assertTrue(control.Hidden)
-        self.assertEqual(control.Text,'')
+    def test_download_window_lifecycle_and_background(self):
+        from unittest.mock import MagicMock
+        from vincisub.model_ui import DownloadWindow
+        popup=DownloadWindow.__new__(DownloadWindow)
+        popup.window=MagicMock();popup.items={'Progress':SimpleNamespace(Text='')}
+        popup.active=False;popup.dismissed=False;popup.cancel=MagicMock()
+        status=dict(state='running',phase='download',total=100,downloaded=59,progress=59)
+        popup.update(status,1);popup.update(status,2)
+        popup.window.Show.assert_called_once()
+        self.assertIn('59%',popup.items['Progress'].Text)
+        popup.dismiss();popup.update(status,3)
+        popup.window.Show.assert_called_once()
+        popup.window.Hide.reset_mock()
+        popup.update(dict(state='running',phase='loading'),4)
+        popup.window.Hide.assert_called_once()
+        self.assertFalse(popup.active)
+        popup.update(status,5)
+        self.assertEqual(popup.window.Show.call_count,2)
+        popup.stop();popup.cancel.assert_called_once()
+        for state in ('done','cancelled','error'):
+            popup.update(dict(state=state),6)
+            self.assertFalse(popup.active)
