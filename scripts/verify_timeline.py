@@ -172,6 +172,41 @@ def main():
         assert len(final_contents)>len(first_contents)
         assert all(start>=90125 for start,end,text in final_contents[len(first_contents):])
         time.sleep(1)
+        # Scan every track, including an overlapping disabled subtitle track.
+        assert timeline.AddTrack('subtitle')
+        other_track=timeline.GetTrackCount('subtitle')
+        timeline.SetTrackEnable('subtitle',track_count,False)
+        timeline.SetTrackEnable('subtitle',other_track,True)
+        time.sleep(.3)
+        other_srt=job/'other-track.srt'
+        other_srt.write_text(to_srt([Caption(.2,.6,'另一条轨道')]),encoding='utf-8-sig')
+        temporary.GetMediaPool().AppendToTimeline(import_media(temporary.GetMediaPool(),other_srt))
+        time.sleep(.3)
+        timeline.SetTrackEnable('subtitle',other_track,False)
+        timeline.SetTrackEnable('subtitle',track_count,True)
+        other_before=[(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in timeline.GetItemListInTrack('subtitle',other_track)]
+        assert len(other_before)==1
+        ui.QueueEvent(widgets['ReadAll'],'Clicked',{})
+        time.sleep(1)
+        assert widgets['Captions'].TopLevelItemCount()==len(final_contents)+1
+        assert widgets['Captions'].TopLevelItem(1).Text[4]==f'ST{other_track}'
+        assert '已读取全部' in widgets['Status'].Text,widgets['Status'].Text
+        widgets['Captions'].TopLevelItem(0).Selected=True
+        ui.QueueEvent(widgets['Captions'],'ItemClicked',{})
+        time.sleep(.3)
+        widgets['Text'].Text='从全部字幕列表修改'
+        ui.QueueEvent(widgets['Apply'],'Clicked',{})
+        deadline=time.monotonic()+30
+        while time.monotonic()<deadline:
+            time.sleep(.5)
+            refreshed=timeline.GetItemListInTrack('subtitle',track_count)
+            if refreshed and refreshed[0].GetName()=='从全部字幕列表修改':
+                break
+        assert refreshed[0].GetName()=='从全部字幕列表修改'
+        assert other_before==[(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in timeline.GetItemListInTrack('subtitle',other_track)]
+        assert timeline.GetTrackCount('subtitle')==other_track
+        time.sleep(1)
+        assert widgets['Captions'].TopLevelItemCount()==len(final_contents)+1
         ui.QueueEvent(window, 'Close', {'close':True})
         deadline = time.monotonic()+5
         while ui.FindWindow('com.vincisub.native') and time.monotonic()<deadline:

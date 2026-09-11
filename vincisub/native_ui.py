@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from .jobs import Jobs
+from .catalog import read_all, edit_job
 from .storage import ROOT, write_json
 from .timeline import describe_timeline, snapshot
 
@@ -22,9 +23,9 @@ def launch(resolve, fusion, bmd):
     jobs = Jobs()
     dispatcher = bmd.UIDispatcher(ui)
     window = dispatcher.AddWindow(
-        {"ID": WINDOW_ID, "WindowTitle": "VinciSub · 中文字幕", "Geometry": [180, 140, 800, 700]},
+        {"ID": WINDOW_ID, "WindowTitle": "VinciSub · 奇奇字幕", "Geometry": [180, 140, 800, 700]},
         ui.VGroup([
-            ui.Label({"Text": "VinciSub  ·  本地中文字幕", "Weight": 0, "Font": ui.Font({"PixelSize": 22, "Bold": True})}),
+            ui.Label({"Text": "VinciSub  ·  奇奇字幕", "Weight": 0, "Font": ui.Font({"PixelSize": 22, "Bold": True})}),
             ui.Button({"ID": "Refresh", "Text": "刷新时间线 / 音轨", "Weight": 0}),
             ui.Label({"ID": "Timeline", "Weight": 0}),
             ui.Label({"Text": "音轨（可多选，不勾选时自动识别）", "Weight": 0}),
@@ -33,8 +34,9 @@ def launch(resolve, fusion, bmd):
             ui.HGroup({"Weight": 0}, [ui.ComboBox({"ID": "Model"}), ui.Label({"Text": "每条字数", "Weight": 0}), ui.SpinBox({"ID": "Chars", "Minimum": 6, "Maximum": 60, "Value": 20})]),
             ui.Label({"Text": "未设入点、出点时识别整条时间线。单次最长 30 分钟。", "WordWrap": True, "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Generate", "Text": "生成字幕"}), ui.Button({"ID": "Cancel", "Text": "取消任务"})]),
+            ui.Button({"ID": "ReadAll", "Text": "读取全部字幕", "Weight": 0}),
             ui.Label({"ID": "Status", "WordWrap": True, "MinimumSize": [0, 45], "Weight": 0}),
-            ui.Tree({"ID": "Captions", "Events": {"ItemClicked": True, "ItemDoubleClicked": True}, "ColumnCount": 4, "RootIsDecorated": False, "AlternatingRowColors": True}),
+            ui.Tree({"ID": "Captions", "Events": {"ItemClicked": True, "ItemDoubleClicked": True}, "ColumnCount": 5, "RootIsDecorated": False, "AlternatingRowColors": True}),
             ui.HGroup({"Weight": 0}, [ui.Label({"Text": "开始 / 结束（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Start", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.DoubleSpinBox({"ID": "End", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.Button({"ID": "Apply", "Text": "保存并同步"})]),
             ui.LineEdit({"ID": "Text", "PlaceholderText": "选择一条字幕后编辑文字", "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.Label({"Text": "整体偏移（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Offset", "Decimals": 3, "Minimum": -86400, "Maximum": 86400, "Value": 0}), ui.Button({"ID": "Export", "Text": "保存 SRT"}), ui.Button({"ID": "Import", "Text": "写入字幕轨"})]),
@@ -44,12 +46,12 @@ def launch(resolve, fusion, bmd):
     items["Model"].AddItems(["Qwen3-ASR 0.6B · 轻量", "Qwen3-ASR 1.7B · 标准"])
     tree = items["Captions"]
     header = tree.NewItem()
-    for i, label in enumerate(["序号", "开始", "结束", "字幕"]):
+    for i, label in enumerate(["序号", "开始", "结束", "字幕", "轨道"]):
         header.Text[i] = label
     tree.SetHeaderItem(header)
-    for i, width in enumerate([50, 85, 85, 500]):
+    for i, width in enumerate([50, 85, 85, 420, 65]):
         tree.ColumnWidth[i] = width
-    state = {"rows": [], "selected": None, "loaded": None, "status": None, "track_ids": [], "timeline_id": None, "range": None, "placement": None, "auto_place": None, "placing": False}
+    state = {"catalog": None, "rows": [], "selected": None, "loaded": None, "status": None, "track_ids": [], "timeline_id": None, "range": None, "placement": None, "auto_place": None, "placing": False}
 
     def guard(callback):
         def wrapped(event=None):
@@ -88,7 +90,7 @@ def launch(resolve, fusion, bmd):
         tree.Clear()
         for index, row in enumerate(state["rows"]):
             item = tree.NewItem()
-            for column, value in enumerate([str(index + 1), f'{row["start"]:.3f}', f'{row["end"]:.3f}', row["text"]]):
+            for column, value in enumerate([str(index + 1), f'{row["start"]:.3f}', f'{row["end"]:.3f}', row["text"], f'ST{row["track"]}' if "track" in row else ""]):
                 item.Text[column] = value
             tree.AddTopLevelItem(item)
 
@@ -117,6 +119,8 @@ def launch(resolve, fusion, bmd):
         items["Text"].SetFocus()
 
     def save(event=None):
+        if state["catalog"] is not None:
+            return
         if not state["rows"]:
             return
         rows = [dict(row) for row in state["rows"]]
@@ -136,7 +140,7 @@ def launch(resolve, fusion, bmd):
         plan = snapshot(resolve, selected_tracks())
         show_range(plan)
         jobs.start("timeline", model="qwen-0.6b" if items["Model"].CurrentIndex == 0 else "qwen-1.7b", max_chars=items["Chars"].Value, timeline=plan)
-        state.update(rows=[], selected=None, loaded=None, status=None, auto_place=jobs.directory)
+        state.update(catalog=None, rows=[], selected=None, loaded=None, status=None, auto_place=jobs.directory)
         render_rows()
         poll()
 
@@ -146,7 +150,30 @@ def launch(resolve, fusion, bmd):
         if directory:
             items["Status"].Text = "已保存：" + str(jobs.export(directory))
 
+    def read_captions(event=None):
+        if jobs.busy() or state['placing']:
+            return
+        catalog = read_all(resolve)
+        save()
+        state.update(catalog=catalog,rows=catalog['rows'],loaded=jobs.directory)
+        items['Start'].Maximum = catalog['duration']
+        items['End'].Maximum = catalog['duration']
+        items['Offset'].Value = 0
+        render_rows()
+        current_status = jobs.status()
+        state['status'] = (current_status['state'],current_status['message'])
+        items['Status'].Text = f"已读取全部 {len(catalog['rows'])} 条字幕，来自 {len(catalog['tracks'])} 条字幕轨。"
+        poll()
+
     def apply(event=None):
+        if state['catalog'] is not None:
+            if state['selected'] is None:
+                raise ValueError('请先选择一条字幕。')
+            jobs.directory = edit_job(state['catalog'],state['selected'],dict(
+                start=items['Start'].Value,end=items['End'].Value,text=items['Text'].Text),jobs.data)
+            state['loaded'] = jobs.directory
+            import_result()
+            return
         save()
         if jobs.directory and (jobs.directory/'placement-receipt.json').exists():
             import_result()
@@ -180,7 +207,7 @@ def launch(resolve, fusion, bmd):
 
     def poll(event=None):
         if state['placing']:
-            for key in ['Generate', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End', 'Offset']:
+            for key in ['Generate', 'ReadAll', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End', 'Offset']:
                 items[key].Enabled = False
             items['Cancel'].Enabled = True
             path = jobs.directory/'placement.json'
@@ -188,6 +215,8 @@ def launch(resolve, fusion, bmd):
             items['Status'].Text = placement['message']
             if state['placement'].poll() is not None:
                 state['placing'] = False
+                if placement['state'] == 'done' and state['catalog'] is not None:
+                    read_captions()
                 if placement['state'] == 'running':
                     items['Status'].Text = '字幕写入进程中断，请检查本次 VinciSub 字幕轨。'
             return
@@ -197,7 +226,7 @@ def launch(resolve, fusion, bmd):
             items["Status"].Text = status["message"]
             state["status"] = signature
         busy = jobs.busy()
-        for key in ["Generate", "Track", "Refresh", "Model", "Chars"]:
+        for key in ["Generate", "ReadAll", "Track", "Refresh", "Model", "Chars"]:
             items[key].Enabled = not busy
         items["Cancel"].Enabled = busy
         if not busy:
@@ -205,10 +234,18 @@ def launch(resolve, fusion, bmd):
                 info = describe_timeline(resolve)
                 if info["timeline_id"] != state["timeline_id"]:
                     refresh()
+                    if state["catalog"] is not None:
+                        read_captions()
                 else:
                     show_range(info)
             except ValueError:
                 items["Range"].Text = "请打开有效时间线并刷新。"
+        if state['catalog'] is not None:
+            for key in ['Apply','Text','Start','End']:
+                items[key].Enabled = bool(state['rows'])
+            for key in ['Export','Import','Offset']:
+                items[key].Enabled = False
+            return
         done = status["state"] == "done"
         for key in ["Apply", "Export", "Import", "Text", "Start", "End", "Offset"]:
             placed = jobs.directory and (jobs.directory/"placement-receipt.json").exists()
@@ -234,7 +271,7 @@ def launch(resolve, fusion, bmd):
         save()
         dispatcher.ExitLoop()
 
-    for key, callback in {"Refresh": refresh, "Generate": generate, "Cancel": cancel, "Apply": apply, "Export": export, "Import": import_result}.items():
+    for key, callback in {"ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Apply": apply, "Export": export, "Import": import_result}.items():
         window.On[key].Clicked = guard(callback)
     window.On.Captions.ItemClicked = guard(select)
     window.On.Captions.ItemDoubleClicked = guard(edit)
