@@ -144,3 +144,24 @@ class EditingTests(unittest.TestCase):
             receipt=json.loads((d/'placement-receipt.json').read_text())
             self.assertEqual([v[3] for v in receipt['items']],['甲','乙'])
             self.assertEqual(set(tracks[2]),set(items))
+
+    @patch('vincisub.editing.time.sleep')
+    def test_reuse_empty_track_without_importing_empty_backup(self,sleep):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);d=root/'first';d.mkdir()
+            r,p,t,items,tracks=self.scene(d)
+            tracks[2].clear()
+            receipt=json.loads((d/'placement-receipt.json').read_text())
+            receipt['items']=[]
+            (d/'placement-receipt.json').write_text(json.dumps(receipt))
+            second=root/'second';second.mkdir()
+            (second/'resolve.json').write_text((d/'resolve.json').read_text(),encoding='utf-8')
+            result=json.loads((d/'result.json').read_text(encoding='utf-8'))
+            result['captions'][0]['text']='甲'
+            (second/'result.json').write_text(json.dumps(result),encoding='utf-8')
+            p.GetMediaPool.return_value.AppendToTimeline.side_effect=lambda _:tracks[2].extend(items)
+            with patch('vincisub.editing.import_media',return_value=[object()]) as imported:
+                self.assertEqual(sync(second,r,append_from=d),2)
+                imported.assert_called_once()
+            t.DeleteClips.assert_not_called()
+            t.SetTrackEnable.assert_any_call('subtitle',2,True)

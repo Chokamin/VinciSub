@@ -36,31 +36,48 @@ def fingerprint(result):
 
 
 def reusable_job(directory, metadata, timeline, rows):
-    """Reuse the latest still-verified track of this source timeline if its range is free."""
-    candidates = sorted(Path(directory).parent.glob('*/placement-receipt.json'),
-                        key=lambda p:p.stat().st_mtime_ns, reverse=True)
-    for path in candidates:
-        if path.parent == Path(directory):
+    """Use current contents of a known VinciSub track, including manual corrections."""
+    directory = Path(directory)
+    known_names = set()
+    for path in directory.parent.glob('*/placement-receipt.json'):
+        if path.parent == directory:
             continue
         try:
             source = json.loads((path.parent/'resolve.json').read_text(encoding='utf-8'))
             if any(source.get(k) != metadata.get(k) for k in ('project_id','timeline_id')):
                 continue
             receipt = json.loads(path.read_text(encoding='utf-8'))
-            track = receipt['track']
-            if not 1 <= track <= timeline.GetTrackCount('subtitle'):
-                continue
-            current = sorted(timeline.GetItemListInTrack('subtitle',track) or [],key=lambda i:i.GetStart())
-            actual = [(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in current]
-            if actual != [tuple(v) for v in receipt['items']]:
-                continue
-            left = min(metadata.get('start',rows[0]['start']),rows[0]['start'])
-            right = max(metadata.get('end',rows[-1]['end']),rows[-1]['end'])
-            if timeline.GetIsTrackLocked('subtitle',track) or any(left < v[2] and v[1] < right for v in actual):
-                return None
-            return path.parent
+            known_names.add('VinciSub ' + path.parent.name[:8])
+            if isinstance(receipt.get('track_name'), str):
+                known_names.add(receipt['track_name'])
         except (OSError,ValueError,KeyError,TypeError):
             continue
+    left = min(metadata.get('start',rows[0]['start']),rows[0]['start'])
+    right = max(metadata.get('end',rows[-1]['end']),rows[-1]['end'])
+    tracks = list(range(1,timeline.GetTrackCount('subtitle')+1))
+    tracks.sort(key=lambda n:(not timeline.GetIsTrackEnabled('subtitle',n),n))
+    decisions = []
+    for track in tracks:
+        name = timeline.GetTrackName('subtitle',track)
+        if name not in known_names:
+            continue
+        if timeline.GetIsTrackLocked('subtitle',track):
+            decisions.append(dict(track=track,reason='locked'))
+            continue
+        current = sorted(timeline.GetItemListInTrack('subtitle',track) or [],key=lambda i:i.GetStart())
+        actual = [(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in current]
+        if any(left < v[2] and v[1] < right for v in actual):
+            decisions.append(dict(track=track,reason='overlap'))
+            continue
+        # Freeze live contents for sync's final recheck and rollback. Do not replace
+        # older job receipts: their edit ownership no longer describes this track.
+        snapshot = directory/'reuse-source'
+        write_json(snapshot/'placement-receipt.json',dict(
+            track=track,track_name=name,items=actual,fingerprint=fingerprint(actual),owned_indices=[]))
+        decisions.append(dict(track=track,reason='reuse'))
+        write_json(directory/'track-selection.json',dict(start=left,end=right,tracks=decisions,selected=track))
+        return snapshot
+    write_json(directory/'track-selection.json',dict(start=left,end=right,tracks=decisions,selected=None))
     return None
 
 
@@ -157,7 +174,7 @@ def place(directory, resolve=None):
             write_json(directory/'placement-diagnostic.json', dict(actual=actual, expected=rows,
                        misplaced=[i.GetUniqueId() for i in misplaced]))
             raise RuntimeError('字幕轨道、文字或位置回读验证失败。')
-        write_json(receipt_path, dict(fingerprint=fingerprint(result), track=track, items=actual))
+        write_json(receipt_path, dict(fingerprint=fingerprint(result), track=track, track_name=name, items=actual))
         return track
     except Exception:
         if identity():

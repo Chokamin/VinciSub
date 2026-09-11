@@ -133,6 +133,20 @@ def main():
         time.sleep(1)
         # Generate a second non-overlapping selection through the same native window.
         first_contents = [(i.GetStart(),i.GetEnd(),i.GetName()) for i in current]
+        # Reproduce manual timeline edits that invalidate old receipts.
+        from vincisub.subtitles import Caption, to_srt
+        manual_rows=[Caption(.1,.5,'手动补充，必须保留')]+[Caption((a-90000)/25,(b-90000)/25,text) for a,b,text in first_contents]
+        manual=job/'manual-test.srt'
+        manual.write_text(to_srt(manual_rows),encoding='utf-8-sig')
+        manual_media=import_media(temporary.GetMediaPool(),manual)
+        assert timeline.DeleteClips(current,False)
+        temporary.GetMediaPool().AppendToTimeline(manual_media)
+        time.sleep(.5)
+        current=timeline.GetItemListInTrack('subtitle',track_count)
+        first_contents=[(i.GetStart(),i.GetEnd(),i.GetName()) for i in current]
+        assert len(first_contents)==len(manual_rows)
+        assert first_contents[0][2]=='手动补充，必须保留'
+
         timeline.SetMarkInOut(125,216)
         widgets['Track'].TopLevelItem(1).CheckState[0] = 'Unchecked'
         previous_job = job

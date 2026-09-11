@@ -73,13 +73,14 @@ def sync(directory, resolve=None, append_from=None):
         return media
     check()
     new_media = media_for(target)
-    backup_media = media_for([v[1:] for v in old])
+    backup_media = media_for([v[1:] for v in old]) if old else []
     write_json(directory/'edit-backup.json',dict(receipt=receipt,requested=result))
     enabled = {n:timeline.GetIsTrackEnabled('subtitle',n) for n in range(1,timeline.GetTrackCount('subtitle')+1)}
     before = {i.GetUniqueId() for n in enabled for i in timeline.GetItemListInTrack('subtitle',n) or []}
     old_time = timeline.GetCurrentTimecode()
     changed_clips = original
     mutation = False
+    completed = False
     def activate():
         for n in enabled:
             if not timeline.SetTrackEnable('subtitle',n,n==track):
@@ -98,7 +99,7 @@ def sync(directory, resolve=None, append_from=None):
         if records(items()) != old:
             raise RuntimeError('同步前字幕发生变化，已停止。')
         mutation = True
-        if not timeline.DeleteClips(changed_clips,False):
+        if changed_clips and not timeline.DeleteClips(changed_clips,False):
             raise RuntimeError('无法替换已修改字幕。')
         project.GetMediaPool().AppendToTimeline(new_media)
         check()
@@ -107,7 +108,8 @@ def sync(directory, resolve=None, append_from=None):
         if any(i.GetUniqueId() not in before for n in enabled if n != track
                for i in timeline.GetItemListInTrack('subtitle',n) or []):
             raise RuntimeError('字幕写入了错误轨道。')
-        write_json(receipt_path,dict(fingerprint=fingerprint(result),track=track,items=records(actual),owned_indices=owned))
+        write_json(receipt_path,dict(fingerprint=fingerprint(result),track=track,track_name=timeline.GetTrackName('subtitle',track),items=records(actual),owned_indices=owned))
+        completed = True
         return track
     except Exception as error:
         if mutation and identity():
@@ -122,7 +124,8 @@ def sync(directory, resolve=None, append_from=None):
                     if remaining and not timeline.DeleteClips(remaining,False):
                         raise RuntimeError('无法准备原字幕恢复')
                     activate()
-                    project.GetMediaPool().AppendToTimeline(backup_media)
+                    if backup_media:
+                        project.GetMediaPool().AppendToTimeline(backup_media)
                 restored = matches([v[1:] for v in old])
                 write_json(source_receipt_path,dict(receipt,items=records(restored)))
             except Exception as rollback_error:
@@ -131,5 +134,5 @@ def sync(directory, resolve=None, append_from=None):
     finally:
         if identity():
             for n,value in enabled.items():
-                timeline.SetTrackEnable('subtitle',n,value)
+                timeline.SetTrackEnable('subtitle',n,n == track if append_from and completed else value)
             timeline.SetCurrentTimecode(old_time)

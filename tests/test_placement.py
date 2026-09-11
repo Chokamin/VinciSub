@@ -143,11 +143,37 @@ class PlacementTests(unittest.TestCase):
             receipt=dict(track=1,items=[(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in items])
             (old/'placement-receipt.json').write_text(json.dumps(receipt))
             rows=[dict(start=90100,end=90110,text='新')]
-            self.assertEqual(reusable_job(new,metadata,t,rows),old)
+            self.assertEqual(reusable_job(new,metadata,t,rows),new/'reuse-source')
             self.assertIsNone(reusable_job(new,dict(metadata,start=90075),t,rows))
             self.assertIsNone(reusable_job(new,dict(metadata,timeline_id='other'),t,rows))
             t.GetIsTrackLocked.return_value=True
             self.assertIsNone(reusable_job(new,metadata,t,rows))
             t.GetIsTrackLocked.return_value=False
             items[0].GetName.return_value='外部修改'
-            self.assertIsNone(reusable_job(new,metadata,t,rows))
+            self.assertEqual(reusable_job(new,metadata,t,rows),new/'reuse-source')
+            fresh=json.loads((new/'reuse-source'/'placement-receipt.json').read_text(encoding='utf-8'))
+            self.assertEqual(fresh['items'][0][3],'外部修改')
+
+    def test_reuse_searches_past_conflicting_track_and_preserves_live_extra_caption(self,sleep):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);old=root/'old';old.mkdir();new=root/'new';new.mkdir()
+            r,p,t,items,tracks=self.scene(old)
+            metadata=dict(project_id='p',timeline_id='t',start=90076,end=90126)
+            (old/'placement-receipt.json').write_text(json.dumps(dict(track=1,items=[])))
+            t.GetTrackCount.return_value=2
+            t.GetIsTrackLocked.return_value=False
+            extra=MagicMock();extra.GetUniqueId.return_value='manually-added'
+            extra.GetStart.return_value=90190;extra.GetEnd.return_value=90200
+            extra.GetName.return_value='手动添加'
+            tracks[1]=[items[0],items[1],extra]
+            blocked=MagicMock();blocked.GetStart.return_value=90100;blocked.GetEnd.return_value=90110
+            tracks[2]=[blocked]
+            # Active track conflicts; the disabled track still has a usable gap.
+            t.GetIsTrackEnabled.side_effect=lambda kind,n:n==2
+            chosen=reusable_job(new,metadata,t,[dict(start=90100,end=90110,text='新')])
+            self.assertIsNotNone(chosen)
+            receipt=json.loads((chosen/'placement-receipt.json').read_text(encoding='utf-8'))
+            self.assertEqual(receipt['track'],1)
+            self.assertEqual(receipt['items'][-1][3],'手动添加')
+            t.GetTrackName.return_value='用户自己的字幕轨'
+            self.assertIsNone(reusable_job(new,metadata,t,[dict(start=90100,end=90110,text='新')]))

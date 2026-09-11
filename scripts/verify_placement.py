@@ -110,6 +110,17 @@ def main():
         restored = timeline.GetItemListInTrack('subtitle',track)
         assert [(i.GetName(),i.GetStart(),i.GetEnd()) for i in restored] == [(c['text'],90000+round(c['start']*25),90000+round(c['end']*25)) for c in rows]
         assert state() == before
+        # Simulate external editing: all clip IDs change and an extra caption is added.
+        from vincisub.subtitles import Caption, to_srt
+        rows.append(dict(start=7.8,end=8.2,text='在时间线额外补充的字幕'))
+        manual = output/'manual-edit.srt'
+        manual.write_text(to_srt([Caption(**r) for r in rows]),encoding='utf-8-sig')
+        manual_media = import_media(pool,manual)
+        assert timeline.DeleteClips(timeline.GetItemListInTrack('subtitle',track),False)
+        pool.AppendToTimeline(manual_media)
+        import time
+        time.sleep(.5)
+        assert len(timeline.GetItemListInTrack('subtitle',track)) == 4
         # A second selection in an earlier gap must reuse the same track.
         second_job = output.parent/(name+'_second')
         second_job.mkdir()
