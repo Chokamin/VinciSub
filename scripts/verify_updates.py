@@ -56,7 +56,7 @@ finally:
     ui.QueueEvent(parent.GetItems()['CheckUpdate'],'Clicked',{})
     wait_for(lambda:ui.FindWindow('com.vincisub.native.update'))
     items=ui.FindWindow('com.vincisub.native.update').GetItems()
-    wait_for(lambda:items['RetryUpdate'].Enabled)
+    wait_for(lambda:bool(items['UpdateStatus'].Text) and items['UpdateStatus'].Text != '正在检查更新…')
     assert '当前无需更新' in items['UpdateStatus'].Text, items['UpdateStatus'].Text
     assert not items['OpenRelease'].Enabled
     print('Native update PASS: preview, retry, link callback, close, main button, live release source. No timeline writes.')

@@ -237,7 +237,8 @@
 - 改动：创建 Chokamin/VinciSub 公开仓库，关联 origin，配置更新源，补充下载入口与 v0.1.0 发布说明，更新发布源测试与原生验收脚本。
 - 关键文件：update-source.json、README.md、RELEASE_NOTES.md、tests/test_updates.py、scripts/verify_updates.py。
 - 验证结果：103 项测试通过，差异检查通过；全部 Git 历史的缓存路径和常见凭据模式检查通过；模型、素材、虚拟环境均未跟踪。
-- 剩余问题：待推送、创建 Release 和验证真实更新检查后记录最终状态。
+- 发布结果：main 已推送，v0.1.0 正式 Release 已公开；终端与达芬奇真实联网均返回最新正式版 v0.1.0。原生验收初次过早读取未处理事件的空状态，修正等待时序后全流程通过。
+- 剩余问题：更高版本升级提示已通过模拟验证；跨平台范围仍以 README 为准。
 
 ## 关键文件
 
