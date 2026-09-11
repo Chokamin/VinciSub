@@ -49,7 +49,7 @@ def main():
         assert second['track_index'] == 2 and len(second['clips']) == 1
         assert abs(second['clips'][0]['offset'] - 1) < .001
         assert abs(second['clips'][0]['source_start'] - 1) < .001
-        both = snapshot(resolve)
+        both = snapshot(resolve, [1, 2])
         assert both['track_indices'] == [1, 2] and len(both['clips']) == 2
         mixed, _ = decode(both)
         import numpy as np
@@ -68,7 +68,13 @@ def main():
             window = ui.FindWindow('com.vincisub.native')
         assert window, 'Native window failed to open'
         widgets = window.GetItems()
-        assert widgets['Track'].CurrentIndex == 0, 'Default must follow all audible tracks'
+        assert widgets['Track'].TopLevelItemCount() == 2
+        assert all(widgets['Track'].TopLevelItem(n).CheckState[0] == 'Unchecked' for n in range(2))
+        for n in range(2):
+            widgets['Track'].TopLevelItem(n).CheckState[0] = 'Checked'
+        ui.QueueEvent(widgets['Refresh'], 'Clicked', {})
+        time.sleep(.5)
+        assert all(widgets['Track'].TopLevelItem(n).CheckState[0] == 'Checked' for n in range(2))
         ui.QueueEvent(widgets['Generate'], 'Clicked', {})
         deadline = time.monotonic() + 120
         from vincisub.storage import DATA
@@ -84,9 +90,9 @@ def main():
             if status['state'] in ('done', 'error', 'cancelled'):
                 break
         assert status['state'] == 'done', status
-        assert request['timeline']['track_indices'] == [2]
+        assert request['timeline']['track_indices'] == [1, 2]
         result = json.loads((job/'result.json').read_text(encoding='utf-8'))
-        assert all(2 <= row['start'] < row['end'] <= 5.001 for row in result['captions']), result
+        assert all(1 <= row['start'] < row['end'] <= 5.001 for row in result['captions']), result
         assert not (job/'audio.wav').exists() and not (job/'source').exists()
         time.sleep(1)
         assert widgets['Captions'].TopLevelItemCount() == len(result['captions'])

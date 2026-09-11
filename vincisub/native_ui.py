@@ -27,10 +27,11 @@ def launch(resolve, fusion, bmd):
             ui.Label({"Text": "VinciSub  ·  本地中文字幕", "Weight": 0, "Font": ui.Font({"PixelSize": 22, "Bold": True})}),
             ui.Button({"ID": "Refresh", "Text": "刷新时间线 / 音轨", "Weight": 0}),
             ui.Label({"ID": "Timeline", "Weight": 0}),
-            ui.ComboBox({"ID": "Track", "Weight": 0}),
+            ui.Label({"Text": "音轨（可多选，不勾选时自动识别）", "Weight": 0}),
+            ui.Tree({"ID": "Track", "ColumnCount": 1, "HeaderHidden": True, "RootIsDecorated": False, "MinimumSize": [0, 75], "MaximumSize": [16777215, 110], "Weight": 0}),
             ui.Label({"ID": "Range", "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.ComboBox({"ID": "Model"}), ui.Label({"Text": "每条字数", "Weight": 0}), ui.SpinBox({"ID": "Chars", "Minimum": 6, "Maximum": 60, "Value": 20})]),
-            ui.Label({"Text": "默认识别所有可听音轨，跟随 Solo / Mute；未设入点、出点时识别整条时间线。单次最长 30 分钟。", "WordWrap": True, "Weight": 0}),
+            ui.Label({"Text": "未设入点、出点时识别整条时间线。单次最长 30 分钟。", "WordWrap": True, "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Generate", "Text": "生成字幕"}), ui.Button({"ID": "Cancel", "Text": "取消任务"})]),
             ui.Label({"ID": "Status", "WordWrap": True, "MinimumSize": [0, 45], "Weight": 0}),
             ui.Tree({"ID": "Captions", "Events": {"ItemClicked": True, "ItemDoubleClicked": True}, "ColumnCount": 4, "RootIsDecorated": False, "AlternatingRowColors": True}),
@@ -58,15 +59,22 @@ def launch(resolve, fusion, bmd):
                 items["Status"].Text = str(error)
         return wrapped
 
+    def selected_tracks():
+        return [index for n, index in enumerate(state["track_ids"])
+                if items["Track"].TopLevelItem(n).CheckState[0] == "Checked"]
+
     def refresh(event=None):
         info = describe_timeline(resolve)
-        current = items["Track"].CurrentIndex
-        previous = state["track_ids"][current] if 0 <= current < len(state["track_ids"]) else None
-        items["Track"].Clear()
-        state["track_ids"] = [None] + [track["index"] for track in info["tracks"]]
-        items["Track"].AddItems(["自动 · 所有可听音轨（跟随 Solo / Mute）"] + [f'A{track["index"]} · {track["name"]}' for track in info["tracks"]])
-        if previous in state["track_ids"] and state["timeline_id"] == info["timeline_id"]:
-            items["Track"].CurrentIndex = state["track_ids"].index(previous)
+        previous = selected_tracks() if state["timeline_id"] == info["timeline_id"] else []
+        tracks = items["Track"]
+        tracks.Clear()
+        state["track_ids"] = [track["index"] for track in info["tracks"]]
+        for track in info["tracks"]:
+            item = tracks.NewItem()
+            item.Text[0] = f'A{track["index"]} · {track["name"]}'
+            item.Flags = {"ItemIsEnabled": True, "ItemIsSelectable": True, "ItemIsUserCheckable": True}
+            item.CheckState[0] = "Checked" if track["index"] in previous else "Unchecked"
+            tracks.AddTopLevelItem(item)
         state["timeline_id"] = info["timeline_id"]
         show_range(info)
 
@@ -121,14 +129,11 @@ def launch(resolve, fusion, bmd):
 
     def generate(event=None):
         save()
-        current = items["Track"].CurrentIndex
-        if not 0 <= current < len(state["track_ids"]):
-            raise ValueError("请选择一个音轨。")
         info = describe_timeline(resolve)
         if info["timeline_id"] != state["timeline_id"]:
             refresh()
             raise ValueError("时间线已切换，请确认音轨后重新生成。")
-        plan = snapshot(resolve, state["track_ids"][current])
+        plan = snapshot(resolve, selected_tracks())
         show_range(plan)
         jobs.start("timeline", model="qwen-0.6b" if items["Model"].CurrentIndex == 0 else "qwen-1.7b", max_chars=items["Chars"].Value, timeline=plan)
         state.update(rows=[], selected=None, loaded=None, status=None, auto_place=jobs.directory)

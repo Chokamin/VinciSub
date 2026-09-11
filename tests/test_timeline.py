@@ -104,3 +104,23 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(plan['track_indices'], [1,3])
             self.assertEqual([c['track_index'] for c in plan['clips']], [1,3])
             self.assertEqual([call.args for call in t.GetItemListInTrack.call_args_list], [('audio',1), ('audio',3)])
+            t.GetItemListInTrack.reset_mock()
+            with patch('vincisub.timeline.audible_tracks') as audible:
+                explicit = snapshot(r, [3, 1, 3])
+                audible.assert_not_called()
+            self.assertEqual(explicit['track_indices'], [1, 3])
+            self.assertEqual([c['track_index'] for c in explicit['clips']], [1, 3])
+            self.assertEqual([call.args for call in t.GetItemListInTrack.call_args_list], [('audio',1), ('audio',3)])
+            with patch('vincisub.timeline.audible_tracks', return_value=[2]) as audible:
+                automatic = snapshot(r, [])
+                audible.assert_called_once()
+            self.assertEqual(automatic['track_indices'], [2])
+
+
+    def test_missing_selected_track_refuses_before_reading_audio(self):
+        r, t = MagicMock(), self.timeline()
+        r.GetProjectManager.return_value.GetCurrentProject.return_value.GetCurrentTimeline.return_value = t
+        t.GetTrackCount.return_value = 2
+        with self.assertRaisesRegex(ValueError, '所选音轨不存在'):
+            snapshot(r, [1, 3])
+        t.GetItemListInTrack.assert_not_called()

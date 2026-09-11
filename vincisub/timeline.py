@@ -61,12 +61,14 @@ def source_seconds(timecode, fps):
 
 def snapshot(resolve, track_index=None):
     info = describe_timeline(resolve)
-    if track_index is not None and track_index not in [track['index'] for track in info['tracks']]:
+    selected = [track_index] if isinstance(track_index, int) else list(track_index or [])
+    selected = sorted(set(selected))
+    if any(index not in [track['index'] for track in info['tracks']] for index in selected):
         raise ValueError("所选音轨不存在，请刷新时间线。")
     if info['duration'] > 1800:
         raise ValueError("本次识别范围超过 30 分钟，请设置入点、出点缩小范围。")
     timeline = resolve.GetProjectManager().GetCurrentProject().GetCurrentTimeline()
-    indices = [track_index] if track_index is not None else audible_tracks(resolve, timeline, len(info['tracks']))
+    indices = selected or audible_tracks(resolve, timeline, len(info['tracks']))
     clips, warnings = [], set()
     for selected_index in indices:
         for item in timeline.GetItemListInTrack('audio', selected_index) or []:
