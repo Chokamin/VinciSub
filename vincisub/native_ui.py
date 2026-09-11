@@ -29,7 +29,7 @@ def launch(resolve, fusion, bmd):
             ui.ComboBox({"ID": "Track", "Weight": 0}),
             ui.Label({"ID": "Range", "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.ComboBox({"ID": "Model"}), ui.Label({"Text": "每条字数", "Weight": 0}), ui.SpinBox({"ID": "Chars", "Minimum": 6, "Maximum": 60, "Value": 20})]),
-            ui.Label({"Text": "直接识别所选音轨的源音频；未设入点、出点时识别整条时间线。单次最长 30 分钟。", "WordWrap": True, "Weight": 0}),
+            ui.Label({"Text": "默认识别所有可听音轨，跟随 Solo / Mute；未设入点、出点时识别整条时间线。单次最长 30 分钟。", "WordWrap": True, "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Generate", "Text": "生成字幕"}), ui.Button({"ID": "Cancel", "Text": "取消任务"})]),
             ui.Label({"ID": "Status", "WordWrap": True, "MinimumSize": [0, 45], "Weight": 0}),
             ui.Tree({"ID": "Captions", "ColumnCount": 4, "RootIsDecorated": False, "AlternatingRowColors": True}),
@@ -62,8 +62,8 @@ def launch(resolve, fusion, bmd):
         current = items["Track"].CurrentIndex
         previous = state["track_ids"][current] if 0 <= current < len(state["track_ids"]) else None
         items["Track"].Clear()
-        state["track_ids"] = [track["index"] for track in info["tracks"]]
-        items["Track"].AddItems([f'A{track["index"]} · {track["name"]}' for track in info["tracks"]])
+        state["track_ids"] = [None] + [track["index"] for track in info["tracks"]]
+        items["Track"].AddItems(["自动 · 所有可听音轨（跟随 Solo / Mute）"] + [f'A{track["index"]} · {track["name"]}' for track in info["tracks"]])
         if previous in state["track_ids"] and state["timeline_id"] == info["timeline_id"]:
             items["Track"].CurrentIndex = state["track_ids"].index(previous)
         state["timeline_id"] = info["timeline_id"]

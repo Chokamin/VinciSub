@@ -49,6 +49,15 @@ def main():
         assert second['track_index'] == 2 and len(second['clips']) == 1
         assert abs(second['clips'][0]['offset'] - 1) < .001
         assert abs(second['clips'][0]['source_start'] - 1) < .001
+        both = snapshot(resolve)
+        assert both['track_indices'] == [1, 2] and len(both['clips']) == 2
+        mixed, _ = decode(both)
+        import numpy as np
+        second_audio, _ = decode(second)
+        assert np.allclose(mixed, np.clip(audio + second_audio, -1, 1))
+        timeline.SetTrackEnable('audio', 1, False)
+        only_second = snapshot(resolve)
+        assert only_second['track_indices'] == [2]
         # Exercise the actual native window, worker and automatic result refresh.
         resolve.Fusion().RunScript(str(Path(__file__).resolve().parent / 'VinciSub.py'))
         ui = resolve.Fusion().UIManager
@@ -59,7 +68,7 @@ def main():
             window = ui.FindWindow('com.vincisub.native')
         assert window, 'Native window failed to open'
         widgets = window.GetItems()
-        widgets['Track'].CurrentIndex = 1
+        assert widgets['Track'].CurrentIndex == 0, 'Default must follow all audible tracks'
         ui.QueueEvent(widgets['Generate'], 'Clicked', {})
         deadline = time.monotonic() + 120
         from vincisub.storage import DATA
@@ -75,6 +84,7 @@ def main():
             if status['state'] in ('done', 'error', 'cancelled'):
                 break
         assert status['state'] == 'done', status
+        assert request['timeline']['track_indices'] == [2]
         result = json.loads((job/'result.json').read_text(encoding='utf-8'))
         assert all(2 <= row['start'] < row['end'] <= 5.001 for row in result['captions']), result
         assert not (job/'audio.wav').exists() and not (job/'source').exists()

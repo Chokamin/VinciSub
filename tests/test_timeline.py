@@ -3,7 +3,7 @@ import tempfile
 import unittest
 import wave
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 from vincisub.timeline import selection, snapshot, decode, source_seconds
@@ -86,3 +86,21 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(result['clips'][0]['duration'], 1)
             r.OpenPage.assert_not_called()
             project.AddRenderJob.assert_not_called()
+
+    def test_snapshot_auto_collects_both_tracks(self):
+        with tempfile.NamedTemporaryFile() as source:
+            r, t = MagicMock(), self.timeline()
+            r.GetProjectManager.return_value.GetCurrentProject.return_value.GetCurrentTimeline.return_value = t
+            t.GetTrackCount.return_value = 3
+            item = MagicMock()
+            item.GetStart.return_value, item.GetEnd.return_value = 90000, 90025
+            item.GetClipEnabled.return_value = True
+            item.GetSourceStartTime.return_value, item.GetSourceEndTime.return_value = 0, .96
+            item.GetMediaPoolItem.return_value.GetClipProperty.side_effect = lambda k: {'File Path':source.name, 'FPS':25, 'Start TC':'00:00:00:00'}[k]
+            item.GetSourceAudioChannelMapping.return_value = json.dumps({'embedded_audio_channels':1, 'track_mapping':{'1':{'channel_idx':[1]}}})
+            t.GetItemListInTrack.return_value = [item]
+            with patch('vincisub.timeline.audible_tracks', return_value=[1,3]):
+                plan = snapshot(r)
+            self.assertEqual(plan['track_indices'], [1,3])
+            self.assertEqual([c['track_index'] for c in plan['clips']], [1,3])
+            self.assertEqual([call.args for call in t.GetItemListInTrack.call_args_list], [('audio',1), ('audio',3)])

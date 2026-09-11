@@ -5,6 +5,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .audibility import audible_tracks
+
 RATE = 16000
 
 
@@ -57,57 +59,59 @@ def source_seconds(timecode, fps):
     return frames / fps
 
 
-def snapshot(resolve, track_index):
+def snapshot(resolve, track_index=None):
     info = describe_timeline(resolve)
-    if track_index not in [track['index'] for track in info['tracks']]:
+    if track_index is not None and track_index not in [track['index'] for track in info['tracks']]:
         raise ValueError("所选音轨不存在，请刷新时间线。")
     if info['duration'] > 1800:
         raise ValueError("本次识别范围超过 30 分钟，请设置入点、出点缩小范围。")
     timeline = resolve.GetProjectManager().GetCurrentProject().GetCurrentTimeline()
+    indices = [track_index] if track_index is not None else audible_tracks(resolve, timeline, len(info['tracks']))
     clips, warnings = [], set()
-    for item in timeline.GetItemListInTrack('audio', track_index) or []:
-        start, end = float(item.GetStart(True)), float(item.GetEnd(True))
-        left, right = max(start, info['start']), min(end, info['end'])
-        if right <= left or not item.GetClipEnabled():
-            continue
-        media = item.GetMediaPoolItem()
-        if not media:
-            raise ValueError(f"片段「{item.GetName()}」没有可读取的源素材。")
-        path = media.GetClipProperty('File Path')
-        if not path or not Path(path).is_file():
-            raise ValueError(f"片段「{item.GetName()}」源素材离线，或为暂不支持的嵌套/复合片段。")
-        fps = frame_rate(media.GetClipProperty('FPS'))
-        origin = source_seconds(media.GetClipProperty('Start TC') or '00:00:00:00', fps)
-        source_start = float(item.GetSourceStartTime()) - origin
-        span = float(item.GetSourceEndTime()) - float(item.GetSourceStartTime()) + 1/fps
-        speed = span / ((end-start)/info['fps'])
-        if source_start < -.05 or speed <= 0:
-            raise ValueError(f"片段「{item.GetName()}」源时间映射无效，暂不支持倒放。")
-        if abs(speed - 1) < .015:
-            speed = 1.0
-        else:
-            warnings.add('所选范围含变速片段，字幕按首尾时间映射，请重点校对变速处。')
-        mapping = json.loads(item.GetSourceAudioChannelMapping())
-        tracks = list(mapping.get('track_mapping', {}).values())
-        if len(tracks) != 1:
-            raise ValueError(f"片段「{item.GetName()}」音频通道映射无法确定。")
-        if tracks[0].get('mute'):
-            continue
-        channels = tracks[0].get('channel_idx', [])
-        embedded = int(mapping.get('embedded_audio_channels', 0))
-        # Linked audio has independent sample offsets and must not be mistaken for embedded audio.
-        if any(c > embedded for c in channels):
-            raise ValueError(f"片段「{item.GetName()}」使用外部同步音频，当前还不支持该映射。")
-        channels = [int(c)-1 for c in channels if c > 0]
-        if not channels:
-            continue
-        clips.append(dict(path=path, channels=channels,
-                          source_start=max(0, source_start + (left-start)/info['fps']*speed),
-                          duration=(right-left)/info['fps'], speed=speed,
-                          offset=(left-info['start'])/info['fps']))
+    for selected_index in indices:
+        for item in timeline.GetItemListInTrack('audio', selected_index) or []:
+            start, end = float(item.GetStart(True)), float(item.GetEnd(True))
+            left, right = max(start, info['start']), min(end, info['end'])
+            if right <= left or not item.GetClipEnabled():
+                continue
+            media = item.GetMediaPoolItem()
+            if not media:
+                raise ValueError(f"片段「{item.GetName()}」没有可读取的源素材。")
+            path = media.GetClipProperty('File Path')
+            if not path or not Path(path).is_file():
+                raise ValueError(f"片段「{item.GetName()}」源素材离线，或为暂不支持的嵌套/复合片段。")
+            fps = frame_rate(media.GetClipProperty('FPS'))
+            origin = source_seconds(media.GetClipProperty('Start TC') or '00:00:00:00', fps)
+            source_start = float(item.GetSourceStartTime()) - origin
+            span = float(item.GetSourceEndTime()) - float(item.GetSourceStartTime()) + 1/fps
+            speed = span / ((end-start)/info['fps'])
+            if source_start < -.05 or speed <= 0:
+                raise ValueError(f"片段「{item.GetName()}」源时间映射无效，暂不支持倒放。")
+            if abs(speed - 1) < .015:
+                speed = 1.0
+            else:
+                warnings.add('所选范围含变速片段，字幕按首尾时间映射，请重点校对变速处。')
+            mapping = json.loads(item.GetSourceAudioChannelMapping())
+            tracks = list(mapping.get('track_mapping', {}).values())
+            if len(tracks) != 1:
+                raise ValueError(f"片段「{item.GetName()}」音频通道映射无法确定。")
+            if tracks[0].get('mute'):
+                continue
+            channels = tracks[0].get('channel_idx', [])
+            embedded = int(mapping.get('embedded_audio_channels', 0))
+            # Linked audio has independent sample offsets and must not be mistaken for embedded audio.
+            if any(c > embedded for c in channels):
+                raise ValueError(f"片段「{item.GetName()}」使用外部同步音频，当前还不支持该映射。")
+            channels = [int(c)-1 for c in channels if c > 0]
+            if not channels:
+                continue
+            clips.append(dict(path=path, channels=channels, track_index=selected_index,
+                              source_start=max(0, source_start + (left-start)/info['fps']*speed),
+                              duration=(right-left)/info['fps'], speed=speed,
+                              offset=(left-info['start'])/info['fps']))
     if not clips:
         raise ValueError("所选音轨在当前范围内没有可识别的音频片段。")
-    info.update(track_index=track_index, clips=clips, warnings=sorted(warnings))
+    info.update(track_index=track_index, track_indices=indices, clips=clips, warnings=sorted(warnings))
     return info
 
 

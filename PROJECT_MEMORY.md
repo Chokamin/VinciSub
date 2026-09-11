@@ -26,6 +26,15 @@
 - 验证结果：35 项自动测试通过；独立双音轨时间线（起始 01:00:00:00）实测无标记全长 8.68 秒、入出点范围 1–5 秒、选择第二音轨只识别其范围内音频，生成字幕位于 2.04–4.84 秒；原生窗口自动展示结果；无渲染任务和中间音频文件。原生 SRT 导入亦通过；原项目恢复、测试项目清理；完整测试和 Git 差异检查通过。
 - 剩余问题：源音频路径不复现 Fairlight 混音效果；速度曲线的局部时序需校对；倒放、复合/嵌套、外部同步音频映射暂不支持；字幕导入媒体池后仍需拖入字幕轨道。
 
+### 2026-09-11：默认多音轨识别及 Solo / Mute 筛选
+
+- 需求：不选单轨时识别全部可听轨道，支持同时 Solo 两轨或 Mute 其余轨道；同时继续验证字幕直接落到原生字幕轨。
+- 改动：默认新增自动音轨模式，生成时读取当前 Solo / Mute；合并所选轨道的片段并保留各自时间位置。元数据读取失败或无可听轨道时明确报错；保留指定单轨。更新使用说明、回归测试及原生验证脚本。
+- 关键文件：vincisub/audibility.py、timeline.py、native_ui.py、tests/test_audibility.py、tests/test_timeline.py、scripts/verify_timeline.py、README.md。
+- 验证结果：43 项自动测试通过；Resolve 21.1 独立双音轨项目验证多轨 PCM 混合、静音筛选、默认原生窗口实际 Qwen 识别、入出点对齐、无渲染或音频文件；独立三音轨项目通过界面同时 Solo A1/A2，实际选择仅 [1,2]，排除未静音 A3。测试结束均恢复原项目并清理临时项目。
+- 剩余问题：字幕自动落轨未完成。隔离探针中 AddTrack('subtitle') 后 AppendToTimeline(SRT) 能生成原生字幕，但忽略 recordFrame 并放到时间线末尾；加 startFrame/endFrame 导致 Resolve 退出。已恢复事先保存的原项目、清理测试项目，相关调用未纳入生产代码。ImportIntoTimeline(SRT) 返回 False。不得将媒体池导入报告为自动落轨成功。
+- 剩余问题：Solo 元数据仅验证 21.1；高级总线、Solo Safe 未验证，仍不复现 Fairlight 效果。
+
 ## 关键文件
 
 - PROJECT_MEMORY.md、DECISIONS.md、HANDOFF.md、CLAUDE.md：跨对话协作入口。
