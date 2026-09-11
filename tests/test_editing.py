@@ -96,3 +96,51 @@ class EditingTests(unittest.TestCase):
             p.GetUniqueId.return_value='another'
             with self.assertRaisesRegex(ValueError,'原始项目'):sync(d,r)
             t.DeleteClips.assert_not_called()
+
+    @patch('vincisub.editing.time.sleep')
+    def test_merge_and_edit_only_current_job_rows(self,sleep):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);d=root/'first';d.mkdir()
+            r,p,t,items,tracks=self.scene(d)
+            second=root/'second';second.mkdir()
+            (second/'resolve.json').write_text((d/'resolve.json').read_text(),encoding='utf-8')
+            (second/'result.json').write_text(json.dumps(dict(captions=[dict(start=4,end=4.5,text='新选区')],duration=10)),encoding='utf-8')
+            new=MagicMock()
+            new.GetUniqueId.return_value='new'
+            new.GetName.return_value='新选区'
+            new.GetStart.return_value=90100;new.GetEnd.return_value=90113
+            p.GetMediaPool.return_value.AppendToTimeline.side_effect=lambda _:tracks[2].extend([items[0],new,items[1]])
+            with patch('vincisub.editing.import_media',return_value=[object()]):
+                self.assertEqual(sync(second,r,append_from=d),2)
+                self.assertEqual(sync(second,r),2)
+            receipt=json.loads((second/'placement-receipt.json').read_text())
+            self.assertEqual(receipt['owned_indices'],[1])
+            self.assertEqual([i.GetName() for i in tracks[2]],['甲','新选区','乙'])
+            # Moving the current job into older captions must fail before deletion.
+            result=json.loads((second/'result.json').read_text())
+            result['captions'][0].update(start=2.5,end=3.5)
+            (second/'result.json').write_text(json.dumps(result))
+            calls=t.DeleteClips.call_count
+            with self.assertRaisesRegex(ValueError,'重叠'):sync(second,r)
+            self.assertEqual(t.DeleteClips.call_count,calls)
+
+    @patch('vincisub.editing.time.sleep')
+    def test_failed_reuse_restores_source_receipt_without_marking_new_job_done(self,sleep):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);d=root/'first';d.mkdir()
+            r,p,t,items,tracks=self.scene(d)
+            second=root/'second';second.mkdir()
+            (second/'resolve.json').write_text((d/'resolve.json').read_text(),encoding='utf-8')
+            (second/'result.json').write_text(json.dumps(dict(captions=[dict(start=4,end=4.5,text='新选区')],duration=10)),encoding='utf-8')
+            count=[0]
+            def append(_):
+                count[0]+=1
+                if count[0]==1:raise RuntimeError('reuse failed')
+                tracks[2].extend(items)
+            p.GetMediaPool.return_value.AppendToTimeline.side_effect=append
+            with patch('vincisub.editing.import_media',return_value=[object()]):
+                with self.assertRaisesRegex(RuntimeError,'reuse failed'):sync(second,r,append_from=d)
+            self.assertFalse((second/'placement-receipt.json').exists())
+            receipt=json.loads((d/'placement-receipt.json').read_text())
+            self.assertEqual([v[3] for v in receipt['items']],['甲','乙'])
+            self.assertEqual(set(tracks[2]),set(items))

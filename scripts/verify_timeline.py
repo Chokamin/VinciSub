@@ -131,6 +131,33 @@ def main():
         assert (current[1].GetName(),current[1].GetStart(),current[1].GetEnd()) == original_second
         assert timeline.GetTrackCount('subtitle') == track_count
         time.sleep(1)
+        # Generate a second non-overlapping selection through the same native window.
+        first_contents = [(i.GetStart(),i.GetEnd(),i.GetName()) for i in current]
+        timeline.SetMarkInOut(125,216)
+        widgets['Track'].TopLevelItem(1).CheckState[0] = 'Unchecked'
+        previous_job = job
+        ui.QueueEvent(widgets['Generate'],'Clicked',{})
+        deadline = time.monotonic()+150
+        second_placement = {}
+        while time.monotonic()<deadline:
+            time.sleep(.5)
+            latest=json.loads((DATA/'native-latest.json').read_text(encoding='utf-8'))['id']
+            job=DATA/'jobs'/latest
+            if job == previous_job:
+                continue
+            if (job/'placement.json').exists():
+                second_placement=json.loads((job/'placement.json').read_text(encoding='utf-8'))
+                if second_placement['state'] in ('done','error'):
+                    break
+            worker_status=json.loads((job/'status.json').read_text(encoding='utf-8'))
+            assert worker_status['state'] not in ('error','cancelled'),worker_status
+        assert second_placement.get('state') == 'done',second_placement
+        assert timeline.GetTrackCount('subtitle') == track_count
+        final_contents=[(i.GetStart(),i.GetEnd(),i.GetName()) for i in timeline.GetItemListInTrack('subtitle',track_count)]
+        assert final_contents[:len(first_contents)] == first_contents
+        assert len(final_contents)>len(first_contents)
+        assert all(start>=90125 for start,end,text in final_contents[len(first_contents):])
+        time.sleep(1)
         ui.QueueEvent(window, 'Close', {'close':True})
         deadline = time.monotonic()+5
         while ui.FindWindow('com.vincisub.native') and time.monotonic()<deadline:

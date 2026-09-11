@@ -35,6 +35,35 @@ def fingerprint(result):
     return hashlib.sha256(json.dumps(result, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def reusable_job(directory, metadata, timeline, rows):
+    """Reuse the latest still-verified track of this source timeline if its range is free."""
+    candidates = sorted(Path(directory).parent.glob('*/placement-receipt.json'),
+                        key=lambda p:p.stat().st_mtime_ns, reverse=True)
+    for path in candidates:
+        if path.parent == Path(directory):
+            continue
+        try:
+            source = json.loads((path.parent/'resolve.json').read_text(encoding='utf-8'))
+            if any(source.get(k) != metadata.get(k) for k in ('project_id','timeline_id')):
+                continue
+            receipt = json.loads(path.read_text(encoding='utf-8'))
+            track = receipt['track']
+            if not 1 <= track <= timeline.GetTrackCount('subtitle'):
+                continue
+            current = sorted(timeline.GetItemListInTrack('subtitle',track) or [],key=lambda i:i.GetStart())
+            actual = [(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in current]
+            if actual != [tuple(v) for v in receipt['items']]:
+                continue
+            left = min(metadata.get('start',rows[0]['start']),rows[0]['start'])
+            right = max(metadata.get('end',rows[-1]['end']),rows[-1]['end'])
+            if timeline.GetIsTrackLocked('subtitle',track) or any(left < v[2] and v[1] < right for v in actual):
+                return None
+            return path.parent
+        except (OSError,ValueError,KeyError,TypeError):
+            continue
+    return None
+
+
 def place(directory, resolve=None):
     directory = Path(directory)
     result = json.loads((directory/'result.json').read_text(encoding='utf-8'))
@@ -61,6 +90,10 @@ def place(directory, resolve=None):
             if [(i.GetUniqueId(), i.GetStart(), i.GetEnd(), i.GetName()) for i in actual] == [tuple(x) for x in receipt['items']]:
                 return receipt['track']
         raise ValueError('本任务已有字幕写入记录；请在达芬奇字幕轨内校对，避免重复写入。')
+    previous = reusable_job(directory, metadata, timeline, rows)
+    if previous is not None:
+        from .editing import sync
+        return sync(directory, resolve, append_from=previous)
     old_time = timeline.GetCurrentTimecode()
     track = timeline.GetTrackCount('subtitle') + 1
     name = 'VinciSub ' + directory.name[:8]

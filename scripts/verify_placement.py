@@ -110,6 +110,33 @@ def main():
         restored = timeline.GetItemListInTrack('subtitle',track)
         assert [(i.GetName(),i.GetStart(),i.GetEnd()) for i in restored] == [(c['text'],90000+round(c['start']*25),90000+round(c['end']*25)) for c in rows]
         assert state() == before
+        # A second selection in an earlier gap must reuse the same track.
+        second_job = output.parent/(name+'_second')
+        second_job.mkdir()
+        write_json(second_job/'resolve.json',dict(metadata,start=90030,end=90055))
+        later_rows = [dict(start=1.4,end=2,text='第二次选区')]
+        write_json(second_job/'result.json',dict(captions=later_rows,duration=8.68,offset=0))
+        assert place(second_job,resolve) == track
+        assert timeline.GetTrackCount('subtitle') == track
+        combined = sorted(rows+later_rows,key=lambda r:r['start'])
+        def contents():
+            return [(i.GetName(),i.GetStart(),i.GetEnd()) for i in timeline.GetItemListInTrack('subtitle',track)]
+        def expected(values):
+            return [(r['text'],90000+round(r['start']*25),90000+round(r['end']*25)) for r in sorted(values,key=lambda r:r['start'])]
+        assert contents() == expected(combined)
+        assert place(second_job,resolve) == track
+        later_rows[0]['text'] = '只修改第二次字幕'
+        write_json(second_job/'result.json',dict(captions=later_rows,duration=8.68,offset=0))
+        assert sync(second_job,resolve) == track
+        assert contents() == expected(rows+later_rows)
+        # Overlapping selection creates a new track without overwriting the reused track.
+        overlap_job = output.parent/(name+'_overlap')
+        overlap_job.mkdir()
+        write_json(overlap_job/'resolve.json',dict(metadata,start=90035,end=90050))
+        write_json(overlap_job/'result.json',dict(captions=[dict(start=1.5,end=1.9,text='重叠选区')],duration=8.68,offset=0))
+        assert place(overlap_job,resolve) == track+1
+        assert contents() == expected(rows+later_rows)
+        assert state() == before
         print(json.dumps(dict(automatic_placement=True, same_timeline=True, original_media_unchanged=True, duplicate_prevented=True, captions=len(rows))))
     finally:
         manager.CloseProject(temporary)

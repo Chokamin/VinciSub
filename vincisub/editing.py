@@ -10,12 +10,13 @@ from .storage import write_json
 from .subtitles import Caption, to_srt
 
 
-def sync(directory, resolve=None):
+def sync(directory, resolve=None, append_from=None):
     directory = Path(directory)
     result = json.loads((directory/'result.json').read_text(encoding='utf-8'))
     metadata = json.loads((directory/'resolve.json').read_text(encoding='utf-8'))
     receipt_path = directory/'placement-receipt.json'
-    receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
+    source_receipt_path = Path(append_from)/'placement-receipt.json' if append_from else receipt_path
+    receipt = json.loads(source_receipt_path.read_text(encoding='utf-8'))
     if resolve is None:
         resolve, _ = connect()
     manager = resolve.GetProjectManager()
@@ -38,15 +39,23 @@ def sync(directory, resolve=None):
     if records(original) != old:
         raise ValueError('时间线字幕已在外部修改，已停止同步以免覆盖；请在达芬奇中继续校对。')
     fps, rows = frame_rows(result,timeline)
-    target = [(r['start'],r['end'],r['text']) for r in rows]
-    if len(target) != len(old):
-        raise ValueError('当前只支持修改已有字幕，不能增删行。')
-    changed = [n for n, (a,b) in enumerate(zip(old,target)) if a[1:] != b]
-    if not changed:
-        write_json(receipt_path,dict(receipt,fingerprint=fingerprint(result)))
+    new_rows = [(r['start'],r['end'],r['text']) for r in rows]
+    owned = receipt.get('owned_indices', list(range(len(old))))
+    if append_from:
+        preserved = [v[1:] for v in old]
+    else:
+        if len(new_rows) != len(owned):
+            raise ValueError('当前只支持修改已有字幕，不能增删行。')
+        preserved = [v[1:] for n,v in enumerate(old) if n not in owned]
+    tagged = sorted([(v,False) for v in preserved] + [(v,True) for v in new_rows], key=lambda v:v[0][0])
+    target = [v for v,_ in tagged]
+    if any(b[0] < a[1] for a,b in zip(target,target[1:])):
+        raise ValueError('新字幕与已有字幕重叠，已停止同步。')
+    owned = [n for n,(_,mine) in enumerate(tagged) if mine]
+    if target == [v[1:] for v in old]:
+        write_json(receipt_path,dict(receipt,fingerprint=fingerprint(result),owned_indices=owned))
         return track
-    # Media-list SRT import must target an empty track to retain relative timing.
-    changed = list(range(len(old)))
+    # Refresh the whole verified track so insertion into earlier gaps is accurate.
     if timeline.GetIsTrackLocked('subtitle',track):
         raise ValueError('本次字幕轨已锁定，请先解锁再保存。')
     def check():
@@ -63,13 +72,13 @@ def sync(directory, resolve=None):
             raise RuntimeError('无法准备字幕更新素材。')
         return media
     check()
-    new_media = media_for([target[n] for n in changed])
-    backup_media = media_for([old[n][1:] for n in changed])
+    new_media = media_for(target)
+    backup_media = media_for([v[1:] for v in old])
     write_json(directory/'edit-backup.json',dict(receipt=receipt,requested=result))
     enabled = {n:timeline.GetIsTrackEnabled('subtitle',n) for n in range(1,timeline.GetTrackCount('subtitle')+1)}
     before = {i.GetUniqueId() for n in enabled for i in timeline.GetItemListInTrack('subtitle',n) or []}
     old_time = timeline.GetCurrentTimecode()
-    changed_clips = [original[n] for n in changed]
+    changed_clips = original
     mutation = False
     def activate():
         for n in enabled:
@@ -98,7 +107,7 @@ def sync(directory, resolve=None):
         if any(i.GetUniqueId() not in before for n in enabled if n != track
                for i in timeline.GetItemListInTrack('subtitle',n) or []):
             raise RuntimeError('字幕写入了错误轨道。')
-        write_json(receipt_path,dict(fingerprint=fingerprint(result),track=track,items=records(actual)))
+        write_json(receipt_path,dict(fingerprint=fingerprint(result),track=track,items=records(actual),owned_indices=owned))
         return track
     except Exception as error:
         if mutation and identity():
@@ -115,7 +124,7 @@ def sync(directory, resolve=None):
                     activate()
                     project.GetMediaPool().AppendToTimeline(backup_media)
                 restored = matches([v[1:] for v in old])
-                write_json(receipt_path,dict(receipt,items=records(restored)))
+                write_json(source_receipt_path,dict(receipt,items=records(restored)))
             except Exception as rollback_error:
                 raise RuntimeError('同步失败且恢复未完成，请检查字幕轨及 edit-backup.json。') from rollback_error
         raise error

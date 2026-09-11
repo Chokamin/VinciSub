@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from vincisub.placement import frame_rows, place
+from vincisub.placement import frame_rows, place, reusable_job
 
 
 @patch('vincisub.placement.time.sleep')
@@ -132,3 +132,22 @@ class PlacementTests(unittest.TestCase):
             (d/'result.json').write_text(json.dumps(result),encoding='utf-8')
             with self.assertRaisesRegex(ValueError,'写入记录'): place(d,r)
             p.GetMediaPool.return_value.AppendToTimeline.assert_called_once()
+
+    def test_reuse_checks_selection_boundaries_identity_and_lock(self,sleep):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);old=root/'old';old.mkdir();new=root/'new';new.mkdir()
+            r,p,t,items,tracks=self.scene(old)
+            tracks[1]=items
+            t.GetIsTrackLocked.return_value=False
+            metadata=dict(project_id='p',timeline_id='t',start=90076,end=90126)
+            receipt=dict(track=1,items=[(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in items])
+            (old/'placement-receipt.json').write_text(json.dumps(receipt))
+            rows=[dict(start=90100,end=90110,text='新')]
+            self.assertEqual(reusable_job(new,metadata,t,rows),old)
+            self.assertIsNone(reusable_job(new,dict(metadata,start=90075),t,rows))
+            self.assertIsNone(reusable_job(new,dict(metadata,timeline_id='other'),t,rows))
+            t.GetIsTrackLocked.return_value=True
+            self.assertIsNone(reusable_job(new,metadata,t,rows))
+            t.GetIsTrackLocked.return_value=False
+            items[0].GetName.return_value='外部修改'
+            self.assertIsNone(reusable_job(new,metadata,t,rows))
