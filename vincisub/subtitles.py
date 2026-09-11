@@ -75,15 +75,19 @@ def merge_instant_words(words):
             continue
         if pending:
             if any(abs(w.start - word.start) > .08 for w in pending):
-                raise ValueError("无法将零长度时间戳对齐到相邻词语。")
+                raise ValueError("模型返回的词语时间戳不完整，无法可靠对齐字幕；这与入点、出点设置无关。")
             word = Word(join_words(pending + [word]), min(pending[0].start, word.start), word.end)
             pending.clear()
         result.append(word)
     if pending:
-        if not result or any(abs(w.start - result[-1].end) > .08 for w in pending):
-            raise ValueError("无法将零长度时间戳对齐到相邻词语。")
+        if not result or any(not -.08 <= w.start - result[-1].end <= .2 + 1e-9 for w in pending):
+            raise ValueError("模型返回的词语时间戳不完整，无法可靠对齐字幕；这与入点、出点设置无关。")
         previous = result.pop()
-        result.append(Word(join_words([previous] + pending), previous.start, previous.end))
+        # A trailing word may have a measured instant after a short gap.
+        # Preserve that endpoint and the preceding measured span, without
+        # assigning an arbitrary duration or dropping the trailing text.
+        result.append(Word(join_words([previous] + pending), previous.start,
+                           max(previous.end, max(w.end for w in pending))))
     return result
 
 

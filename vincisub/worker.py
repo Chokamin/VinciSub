@@ -94,6 +94,9 @@ def run(job_dir):
                 raise RuntimeError("模型未返回时间戳，无法生成可靠字幕。")
             for word in with_punctuation(result.time_stamps, result.text, converter.convert):
                 words.append(Word(word.text, word.start + offset, min(word.end + offset, duration)))
+    warnings = list(timeline.get('warnings', [])) if timeline else []
+    if any(word.start == word.end for word in words):
+        warnings.append('部分词语时间戳已合并到相邻词语，请校对这些字幕的起止时间。')
     captions = make_captions(words, max_chars=request["max_chars"])
     if not captions:
         raise ValueError("没有识别到人声。请检查音轨或换一段清晰的人声录音。")
@@ -103,7 +106,7 @@ def run(job_dir):
             row["start"] = round(row["start"] + timeline["offset"], 3)
             row["end"] = round(row["end"] + timeline["offset"], 3)
         duration = (timeline["timeline_end"] - timeline["timeline_start"]) / timeline["fps"]
-    write_json(job_dir / "result.json", dict(captions=rows, duration=duration, model=request["model"], device=device, filename=request["filename"], offset=0, warnings=timeline.get("warnings", []) if timeline else []))
+    write_json(job_dir / "result.json", dict(captions=rows, duration=duration, model=request["model"], device=device, filename=request["filename"], offset=0, warnings=warnings))
     status("done", f"已生成 {len(captions)} 条字幕，可以开始校对。", 100)
 
 

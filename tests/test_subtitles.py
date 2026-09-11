@@ -56,3 +56,11 @@ class SubtitleTests(unittest.TestCase):
         captions = make_captions([Word("一。", 0, 1), Word("二。", .99, 2)])
         self.assertEqual(captions[1].start, 1)
         validate_captions([asdict(c) for c in captions])
+
+    def test_trailing_instant_after_short_gap_preserves_text_and_endpoint(self):
+        captions=make_captions([Word('就',7.2,7.28),Word('给',7.28,7.44),Word('了。',7.6,7.6)])
+        self.assertEqual(captions,[Caption(7.2,7.6,'就给了。')])
+
+    def test_far_trailing_instant_still_refuses_unreliable_timing(self):
+        with self.assertRaisesRegex(ValueError,'与入点、出点设置无关'):
+            make_captions([Word('给',7.28,7.44),Word('了。',8,8)])
