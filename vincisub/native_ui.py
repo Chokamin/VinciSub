@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .jobs import Jobs
 from .resolve import import_subtitle
+from .timeline import describe_timeline, snapshot
 
 WINDOW_ID = "com.vincisub.native"
 
@@ -23,18 +24,19 @@ def launch(resolve, fusion, bmd):
         {"ID": WINDOW_ID, "WindowTitle": "VinciSub · 中文字幕", "Geometry": [180, 140, 800, 700]},
         ui.VGroup([
             ui.Label({"Text": "VinciSub  ·  本地中文字幕", "Weight": 0, "Font": ui.Font({"PixelSize": 22, "Bold": True})}),
-            ui.Button({"ID": "Refresh", "Text": "刷新目标时间线", "Weight": 0}),
+            ui.Button({"ID": "Refresh", "Text": "刷新时间线 / 音轨", "Weight": 0}),
             ui.Label({"ID": "Timeline", "Weight": 0}),
-            ui.HGroup({"Weight": 0}, [ui.LineEdit({"ID": "File", "ReadOnly": True, "PlaceholderText": "选择本地音频或视频"}), ui.Button({"ID": "Browse", "Text": "选择文件"})]),
+            ui.ComboBox({"ID": "Track", "Weight": 0}),
+            ui.Label({"ID": "Range", "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.ComboBox({"ID": "Model"}), ui.Label({"Text": "每条字数", "Weight": 0}), ui.SpinBox({"ID": "Chars", "Minimum": 6, "Maximum": 60, "Value": 20})]),
-            ui.Label({"Text": "先从时间线导出音频，再在这里选择文件。最长 30 分钟，最大 512 MB；首次运行需下载模型。", "WordWrap": True, "Weight": 0}),
+            ui.Label({"Text": "直接识别所选音轨的源音频；未设入点、出点时识别整条时间线。单次最长 30 分钟。", "WordWrap": True, "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Generate", "Text": "生成字幕"}), ui.Button({"ID": "Cancel", "Text": "取消任务"})]),
             ui.Label({"ID": "Status", "WordWrap": True, "MinimumSize": [0, 45], "Weight": 0}),
             ui.Tree({"ID": "Captions", "ColumnCount": 4, "RootIsDecorated": False, "AlternatingRowColors": True}),
             ui.HGroup({"Weight": 0}, [ui.Label({"Text": "开始 / 结束（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Start", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.DoubleSpinBox({"ID": "End", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.Button({"ID": "Apply", "Text": "保存当前条"})]),
             ui.LineEdit({"ID": "Text", "PlaceholderText": "选择一条字幕后编辑文字", "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.Label({"Text": "整体偏移（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Offset", "Decimals": 3, "Minimum": -86400, "Maximum": 86400, "Value": 0}), ui.Button({"ID": "Export", "Text": "保存 SRT"}), ui.Button({"ID": "Import", "Text": "导入达芬奇"})]),
-            ui.Label({"Text": "导入后将媒体池中的 SRT 拖到字幕轨道起点。时间以所选音频的起点为零。", "Weight": 0, "WordWrap": True}),
+            ui.Label({"Text": "导入后将媒体池中的 SRT 拖到字幕轨道起点。字幕已按时间线位置对齐，无需手动补偿入点。", "Weight": 0, "WordWrap": True}),
         ]))
     items = window.GetItems()
     items["Model"].AddItems(["Qwen3-ASR 0.6B · 轻量", "Qwen3-ASR 1.7B · 标准"])
@@ -45,7 +47,7 @@ def launch(resolve, fusion, bmd):
     tree.SetHeaderItem(header)
     for i, width in enumerate([50, 85, 85, 500]):
         tree.ColumnWidth[i] = width
-    state = {"rows": [], "selected": None, "loaded": None, "status": None}
+    state = {"rows": [], "selected": None, "loaded": None, "status": None, "track_ids": [], "timeline_id": None, "range": None}
 
     def guard(callback):
         def wrapped(event=None):
@@ -56,9 +58,21 @@ def launch(resolve, fusion, bmd):
         return wrapped
 
     def refresh(event=None):
-        project = resolve.GetProjectManager().GetCurrentProject()
-        timeline = project.GetCurrentTimeline() if project else None
-        items["Timeline"].Text = "当前时间线：" + (timeline.GetName() if timeline else "未打开时间线")
+        info = describe_timeline(resolve)
+        current = items["Track"].CurrentIndex
+        previous = state["track_ids"][current] if 0 <= current < len(state["track_ids"]) else None
+        items["Track"].Clear()
+        state["track_ids"] = [track["index"] for track in info["tracks"]]
+        items["Track"].AddItems([f'A{track["index"]} · {track["name"]}' for track in info["tracks"]])
+        if previous in state["track_ids"] and state["timeline_id"] == info["timeline_id"]:
+            items["Track"].CurrentIndex = state["track_ids"].index(previous)
+        state["timeline_id"] = info["timeline_id"]
+        show_range(info)
+
+    def show_range(info):
+        items["Timeline"].Text = "当前时间线：" + info["timeline"]
+        label = "入点 → 出点" if info["marked"] else "整条时间线"
+        items["Range"].Text = f'{label} · {info["offset"]:.2f}s – {info["offset"]+info["duration"]:.2f}s · 共 {info["duration"]:.2f} 秒'
 
     def render_rows():
         state["selected"] = None
@@ -90,15 +104,18 @@ def launch(resolve, fusion, bmd):
         state["rows"] = rows
         render_rows()
 
-    def browse(event=None):
-        path = fusion.RequestFile("", "")
-        if path:
-            items["File"].Text = path
-
     def generate(event=None):
         save()
-        jobs.start("file", items["File"].Text,
-                   "qwen-0.6b" if items["Model"].CurrentIndex == 0 else "qwen-1.7b", items["Chars"].Value)
+        current = items["Track"].CurrentIndex
+        if not 0 <= current < len(state["track_ids"]):
+            raise ValueError("请选择一个音轨。")
+        info = describe_timeline(resolve)
+        if info["timeline_id"] != state["timeline_id"]:
+            refresh()
+            raise ValueError("时间线已切换，请确认音轨后重新生成。")
+        plan = snapshot(resolve, state["track_ids"][current])
+        show_range(plan)
+        jobs.start("timeline", model="qwen-0.6b" if items["Model"].CurrentIndex == 0 else "qwen-1.7b", max_chars=items["Chars"].Value, timeline=plan)
         state.update(rows=[], selected=None, loaded=None, status=None)
         render_rows()
         poll()
@@ -123,18 +140,31 @@ def launch(resolve, fusion, bmd):
             items["Status"].Text = status["message"]
             state["status"] = signature
         busy = jobs.busy()
-        for key in ["Generate", "Browse", "Model", "Chars"]:
+        for key in ["Generate", "Track", "Refresh", "Model", "Chars"]:
             items[key].Enabled = not busy
         items["Cancel"].Enabled = busy
+        if not busy:
+            try:
+                info = describe_timeline(resolve)
+                if info["timeline_id"] != state["timeline_id"]:
+                    refresh()
+                else:
+                    show_range(info)
+            except ValueError:
+                items["Range"].Text = "请打开有效时间线并刷新。"
         done = status["state"] == "done"
         for key in ["Apply", "Export", "Import", "Text", "Start", "End", "Offset"]:
             items[key].Enabled = done
         if done and state["loaded"] != jobs.directory:
             result = jobs.result()
             state["rows"] = result["captions"]
+            items["Start"].Maximum = result["duration"]
+            items["End"].Maximum = result["duration"]
             items["Offset"].Value = result.get("offset", 0)
             render_rows()
             state["loaded"] = jobs.directory
+            if result.get("warnings"):
+                items["Status"].Text += " " + " ".join(result["warnings"])
 
     def close(event=None):
         if jobs.busy():
@@ -143,14 +173,14 @@ def launch(resolve, fusion, bmd):
         save()
         dispatcher.ExitLoop()
 
-    for key, callback in {"Refresh": refresh, "Browse": browse, "Generate": generate, "Cancel": lambda e: jobs.cancel(), "Apply": save, "Export": export, "Import": import_result}.items():
+    for key, callback in {"Refresh": refresh, "Generate": generate, "Cancel": lambda e: jobs.cancel(), "Apply": save, "Export": export, "Import": import_result}.items():
         window.On[key].Clicked = guard(callback)
     window.On.Captions.ItemClicked = guard(select)
     window.On[WINDOW_ID].Close = guard(close)
     # Native timers deliver callbacks on the UI dispatcher thread.
     timer = ui.Timer({"ID": "VinciSubPoll", "Interval": 500, "SingleShot": False})
     dispatcher.On.Timeout = guard(poll)
-    refresh()
+    guard(refresh)()
     poll()
     window.Show()
     window.ActivateWindow()

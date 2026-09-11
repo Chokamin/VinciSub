@@ -41,10 +41,16 @@ def run(job_dir):
         write_json(job_dir / "status.json", dict(state=stage, message=message, progress=progress, **extra))
 
     status("running", "正在准备音频…", 3)
-    source = job_dir / "source"
-    if request.get("input_path"):
-        shutil.copyfile(request["input_path"], source)
-    duration = normalize(source, job_dir / "audio.wav")
+    timeline = request.get("timeline")
+    if timeline:
+        from .timeline import decode
+        samples, rate = decode(timeline, lambda n, total: status("running", f"正在读取所选音轨：{n} / {total} 个片段…", 5))
+        duration = timeline["duration"]
+    else:
+        source = job_dir / "source"
+        if request.get("input_path"):
+            shutil.copyfile(request["input_path"], source)
+        duration = normalize(source, job_dir / "audio.wav")
     status("running", "正在加载本地模型；首次运行会下载模型文件…", 8)
     os.environ.setdefault("HF_HOME", str(DATA / "models"))
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
@@ -71,7 +77,8 @@ def run(job_dir):
         forced_aligner=local_model(ALIGNER),
         forced_aligner_kwargs=dict(dtype=dtype, device_map=device, attn_implementation="eager"),
     )
-    samples, rate = sf.read(job_dir / "audio.wav", dtype="float32")
+    if not timeline:
+        samples, rate = sf.read(job_dir / "audio.wav", dtype="float32")
     pieces = list(chunks(samples, rate))
     converter = OpenCC("t2s")
     words = []
@@ -90,7 +97,13 @@ def run(job_dir):
     captions = make_captions(words, max_chars=request["max_chars"])
     if not captions:
         raise ValueError("没有识别到人声。请检查音轨或换一段清晰的人声录音。")
-    write_json(job_dir / "result.json", dict(captions=[asdict(c) for c in captions], duration=duration, model=request["model"], device=device, filename=request["filename"], offset=0))
+    rows = [asdict(c) for c in captions]
+    if timeline:
+        for row in rows:
+            row["start"] = round(row["start"] + timeline["offset"], 3)
+            row["end"] = round(row["end"] + timeline["offset"], 3)
+        duration = (timeline["timeline_end"] - timeline["timeline_start"]) / timeline["fps"]
+    write_json(job_dir / "result.json", dict(captions=rows, duration=duration, model=request["model"], device=device, filename=request["filename"], offset=0, warnings=timeline.get("warnings", []) if timeline else []))
     status("done", f"已生成 {len(captions)} 条字幕，可以开始校对。", 100)
 
 

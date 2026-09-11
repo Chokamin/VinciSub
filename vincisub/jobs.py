@@ -38,24 +38,30 @@ class Jobs:
     def _status(self, state, message, progress=0):
         write_json(self.directory / "status.json", dict(state=state, message=message, progress=progress))
 
-    def start(self, source="file", path=None, model="qwen-0.6b", max_chars=20):
+    def start(self, source="file", path=None, model="qwen-0.6b", max_chars=20, timeline=None):
         if self.busy():
             raise ValueError("已有任务运行中，请等待完成或先取消。")
         if not self.python.is_file():
             raise RuntimeError("请先在 VinciSub 目录运行 bash scripts/setup.sh 安装本地识别环境。")
         if not shutil.which("ffmpeg"):
             raise RuntimeError("未找到 FFmpeg。请先安装：brew install ffmpeg")
-        if source != "file" or model not in MODELS or not 6 <= max_chars <= 60:
+        if source not in {"file", "timeline"} or model not in MODELS or not 6 <= max_chars <= 60:
             raise ValueError("无效的识别设置。")
         if source == "file":
             path = Path(path or "")
             if not path.is_file() or not 0 < path.stat().st_size <= 512 * 1024 * 1024:
                 raise ValueError("请选择有效音视频文件，大小应在 0–512 MB 之间。")
+        if source == "timeline" and (not timeline or not timeline.get("clips")):
+            raise ValueError("没有可识别的时间线音频。")
         self.directory = self.jobs / uuid.uuid4().hex
         self.directory.mkdir()
         request = dict(source=source, model=model, max_chars=max_chars, filename=path.name if source == "file" else "当前时间线")
         if source == "file":
             request["input_path"] = str(path.resolve())
+        if source == "timeline":
+            request["timeline"] = timeline
+            request["filename"] = timeline["timeline"]
+            write_json(self.directory / "resolve.json", timeline)
         write_json(self.directory / "request.json", request)
         self._status("running", "正在准备音频…")
         with (self.directory / "worker.log").open("wb") as log:
@@ -69,7 +75,7 @@ class Jobs:
 
     def status(self):
         if self.directory is None:
-            return dict(state="idle", message="就绪。选择从时间线导出的音频后开始生成。", progress=0)
+            return dict(state="idle", message="就绪。选择音轨后开始生成，范围自动跟随时间线入点、出点。", progress=0)
         status = json.loads((self.directory / "status.json").read_text(encoding="utf-8"))
         if status["state"] == "running" and self.process is not None and not self.busy():
             self._status("error", "识别进程意外退出，请查看任务日志或重试。")
