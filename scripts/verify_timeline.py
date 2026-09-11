@@ -10,6 +10,9 @@ from vincisub.timeline import selection, snapshot, decode
 
 
 def main():
+    from vincisub.storage import DATA
+    vocabulary_path = DATA/"vocabulary.json"
+    vocabulary_before = vocabulary_path.read_bytes() if vocabulary_path.exists() else None
     sample = Path(sys.argv[1]).resolve()
     if not sample.is_file():
         raise ValueError('Missing sample')
@@ -68,6 +71,11 @@ def main():
             window = ui.FindWindow('com.vincisub.native')
         assert window, 'Native window failed to open'
         widgets = window.GetItems()
+        widgets['Vocabulary'].PlainText = '中文字幕工具，中文字幕工具'
+        widgets['UseVocabulary'].Checked = True
+        ui.QueueEvent(widgets['SaveVocabulary'],'Clicked',{})
+        time.sleep(.3)
+        assert json.loads(vocabulary_path.read_text(encoding='utf-8'))['terms'] == ['中文字幕工具']
         assert widgets['Track'].TopLevelItemCount() == 2
         assert all(widgets['Track'].TopLevelItem(n).CheckState[0] == 'Unchecked' for n in range(2))
         for n in range(2):
@@ -91,6 +99,7 @@ def main():
                 break
         assert status['state'] == 'done', status
         assert request['timeline']['track_indices'] == [1, 2]
+        assert request['vocabulary'] == ['中文字幕工具']
         result = json.loads((job/'result.json').read_text(encoding='utf-8'))
         assert all(1 <= row['start'] < row['end'] <= 5.001 for row in result['captions']), result
         assert not (job/'audio.wav').exists() and not (job/'source').exists()
@@ -149,6 +158,7 @@ def main():
 
         timeline.SetMarkInOut(125,216)
         widgets['Track'].TopLevelItem(1).CheckState[0] = 'Unchecked'
+        widgets['UseVocabulary'].Checked = False
         previous_job = job
         ui.QueueEvent(widgets['Generate'],'Clicked',{})
         deadline = time.monotonic()+150
@@ -166,6 +176,7 @@ def main():
             worker_status=json.loads((job/'status.json').read_text(encoding='utf-8'))
             assert worker_status['state'] not in ('error','cancelled'),worker_status
         assert second_placement.get('state') == 'done',second_placement
+        assert json.loads((job/'request.json').read_text(encoding='utf-8'))['vocabulary'] == []
         assert timeline.GetTrackCount('subtitle') == track_count
         final_contents=[(i.GetStart(),i.GetEnd(),i.GetName()) for i in timeline.GetItemListInTrack('subtitle',track_count)]
         assert final_contents[:len(first_contents)] == first_contents
@@ -221,6 +232,10 @@ def main():
             ui.QueueEvent(window.GetItems()['Cancel'], 'Clicked', {})
             time.sleep(1)
             ui.QueueEvent(window, 'Close', {'close':True})
+        if vocabulary_before is None:
+            vocabulary_path.unlink(missing_ok=True)
+        else:
+            vocabulary_path.write_bytes(vocabulary_before)
         manager.CloseProject(temporary)
         if not manager.LoadProject(name):
             raise RuntimeError('Could not restore original project')

@@ -12,6 +12,7 @@ from pathlib import Path
 from .audio import chunks, normalize
 from .storage import DATA, write_json
 from .subtitles import Word, make_captions
+from .vocabulary import context
 
 
 MODELS = {"qwen-0.6b": "Qwen/Qwen3-ASR-0.6B", "qwen-1.7b": "Qwen/Qwen3-ASR-1.7B"}
@@ -81,12 +82,13 @@ def run(job_dir):
         samples, rate = sf.read(job_dir / "audio.wav", dtype="float32")
     pieces = list(chunks(samples, rate))
     converter = OpenCC("t2s")
+    hints = context(request.get("vocabulary", []))
     words = []
     for index, (offset, audio) in enumerate(pieces):
         status("running", f"正在识别并对齐第 {index + 1} / {len(pieces)} 段…", 12 + round(80 * index / len(pieces)), device=device)
         if float(np.max(np.abs(audio))) < 0.0001:
             continue
-        results = model.transcribe(audio=(audio, rate), language="Chinese", return_time_stamps=True)
+        results = model.transcribe(audio=(audio, rate), context=hints, language="Chinese", return_time_stamps=True)
         for result in results:
             if not result.text.strip():
                 continue

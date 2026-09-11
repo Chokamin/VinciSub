@@ -58,3 +58,13 @@ class JobsTests(unittest.TestCase):
         self.jobs.cancel()
         self.assertFalse(self.jobs.busy())
         self.assertEqual(self.jobs.status()['state'], 'cancelled')
+
+    @patch('vincisub.jobs.subprocess.Popen')
+    @patch('vincisub.jobs.shutil.which', return_value='/usr/bin/ffmpeg')
+    def test_vocabulary_is_snapshotted_in_request(self,which,popen):
+        source=Path(self.temp.name)/'input.wav';source.write_bytes(b'test')
+        words=['小蚕','小蚕','奇奇字幕']
+        self.jobs.start(path=source,vocabulary=words)
+        words.clear()
+        request=json.loads((self.jobs.directory/'request.json').read_text(encoding='utf-8'))
+        self.assertEqual(request['vocabulary'],['小蚕','奇奇字幕'])

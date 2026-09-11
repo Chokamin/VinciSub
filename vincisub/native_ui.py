@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .jobs import Jobs
 from .catalog import read_all, edit_job
+from . import vocabulary
 from .storage import ROOT, write_json
 from .timeline import describe_timeline, snapshot
 
@@ -32,6 +33,8 @@ def launch(resolve, fusion, bmd):
             ui.Tree({"ID": "Track", "ColumnCount": 1, "HeaderHidden": True, "RootIsDecorated": False, "MinimumSize": [0, 75], "MaximumSize": [16777215, 110], "Weight": 0}),
             ui.Label({"ID": "Range", "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.ComboBox({"ID": "Model"}), ui.Label({"Text": "每条字数", "Weight": 0}), ui.SpinBox({"ID": "Chars", "Minimum": 6, "Maximum": 60, "Value": 20})]),
+            ui.HGroup({"Weight": 0}, [ui.CheckBox({"ID": "UseVocabulary", "Text": "启用词库"}), ui.Button({"ID": "SaveVocabulary", "Text": "保存词库"})]),
+            ui.TextEdit({"ID": "Vocabulary", "PlaceholderText": "人名、品牌、专业词，每行一个或逗号分隔；最多 100 个词", "AcceptRichText": False, "MinimumSize": [0, 50], "MaximumSize": [16777215, 65], "Weight": 0}),
             ui.Label({"Text": "未设入点、出点时识别整条时间线。单次最长 30 分钟。", "WordWrap": True, "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Generate", "Text": "生成字幕"}), ui.Button({"ID": "Cancel", "Text": "取消任务"})]),
             ui.Button({"ID": "ReadAll", "Text": "读取全部字幕", "Weight": 0}),
@@ -43,6 +46,9 @@ def launch(resolve, fusion, bmd):
             ui.Label({"Text": "识别完成后自动写入当前时间线的字幕轨。双击字幕后在下方修改，点击「保存并同步」刷新本次字幕轨。单条样式请在校对完成后调整。", "Weight": 0, "WordWrap": True}),
         ]))
     items = window.GetItems()
+    saved_vocabulary = vocabulary.load(jobs.data)
+    items["Vocabulary"].PlainText = "\n".join(saved_vocabulary["terms"])
+    items["UseVocabulary"].Checked = saved_vocabulary["enabled"]
     items["Model"].AddItems(["Qwen3-ASR 0.6B · 轻量", "Qwen3-ASR 1.7B · 标准"])
     tree = items["Captions"]
     header = tree.NewItem()
@@ -131,15 +137,22 @@ def launch(resolve, fusion, bmd):
         state["rows"] = rows
         render_rows()
 
+    def save_vocabulary(event=None):
+        value = vocabulary.save(jobs.data,items['Vocabulary'].PlainText,items['UseVocabulary'].Checked)
+        if event is not None:
+            items['Status'].Text = f"已保存 {len(value['terms'])} 个词。词库用于识别提示，仍需校对。"
+        return value
+
     def generate(event=None):
         save()
         info = describe_timeline(resolve)
         if info["timeline_id"] != state["timeline_id"]:
             refresh()
             raise ValueError("时间线已切换，请确认音轨后重新生成。")
+        hints = save_vocabulary()
         plan = snapshot(resolve, selected_tracks())
         show_range(plan)
-        jobs.start("timeline", model="qwen-0.6b" if items["Model"].CurrentIndex == 0 else "qwen-1.7b", max_chars=items["Chars"].Value, timeline=plan)
+        jobs.start("timeline", model="qwen-0.6b" if items["Model"].CurrentIndex == 0 else "qwen-1.7b", max_chars=items["Chars"].Value, timeline=plan, vocabulary=hints["terms"] if hints["enabled"] else [])
         state.update(catalog=None, rows=[], selected=None, loaded=None, status=None, auto_place=jobs.directory)
         render_rows()
         poll()
@@ -207,7 +220,7 @@ def launch(resolve, fusion, bmd):
 
     def poll(event=None):
         if state['placing']:
-            for key in ['Generate', 'ReadAll', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End', 'Offset']:
+            for key in ['Generate', 'UseVocabulary', 'Vocabulary', 'SaveVocabulary', 'ReadAll', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End', 'Offset']:
                 items[key].Enabled = False
             items['Cancel'].Enabled = True
             path = jobs.directory/'placement.json'
@@ -226,7 +239,7 @@ def launch(resolve, fusion, bmd):
             items["Status"].Text = status["message"]
             state["status"] = signature
         busy = jobs.busy()
-        for key in ["Generate", "ReadAll", "Track", "Refresh", "Model", "Chars"]:
+        for key in ["Generate", "UseVocabulary", "Vocabulary", "SaveVocabulary", "ReadAll", "Track", "Refresh", "Model", "Chars"]:
             items[key].Enabled = not busy
         items["Cancel"].Enabled = busy
         if not busy:
@@ -268,10 +281,11 @@ def launch(resolve, fusion, bmd):
         if jobs.busy() or state["placing"]:
             items["Status"].Text = "任务仍在运行，请先取消任务再关闭窗口。"
             return
+        save_vocabulary()
         save()
         dispatcher.ExitLoop()
 
-    for key, callback in {"ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Apply": apply, "Export": export, "Import": import_result}.items():
+    for key, callback in {"SaveVocabulary": save_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Apply": apply, "Export": export, "Import": import_result}.items():
         window.On[key].Clicked = guard(callback)
     window.On.Captions.ItemClicked = guard(select)
     window.On.Captions.ItemDoubleClicked = guard(edit)
