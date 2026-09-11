@@ -106,7 +106,30 @@ def main():
             assert item.GetStart() == 90000 + round(caption['start']*25)
             assert item.GetEnd() == 90000 + round(caption['end']*25)
         time.sleep(1)
+        original_second = (subtitles[1].GetName(),subtitles[1].GetStart(),subtitles[1].GetEnd())
+        track_count = timeline.GetTrackCount('subtitle')
+        assert widgets['Text'].Enabled and widgets['Apply'].Enabled
+        widgets['Captions'].TopLevelItem(0).Selected = True
+        ui.QueueEvent(widgets['Captions'],'ItemDoubleClicked',{})
+        time.sleep(.5)
+        assert widgets['Text'].Text == result['captions'][0]['text'], 'Subtitle row selection did not reach editor: '+str(widgets['Status'].Text)
+        widgets['Text'].Text = '在插件里校对的字幕'
+        ui.QueueEvent(widgets['Apply'],'Clicked',{})
+        deadline = time.monotonic()+30
+        while time.monotonic()<deadline:
+            time.sleep(.5)
+            current=timeline.GetItemListInTrack('subtitle',track_count)
+            if current and current[0].GetName() == '在插件里校对的字幕':
+                break
+        assert current[0].GetName() == '在插件里校对的字幕'
+        assert (current[1].GetName(),current[1].GetStart(),current[1].GetEnd()) == original_second
+        assert timeline.GetTrackCount('subtitle') == track_count
+        time.sleep(1)
         ui.QueueEvent(window, 'Close', {'close':True})
+        deadline = time.monotonic()+5
+        while ui.FindWindow('com.vincisub.native') and time.monotonic()<deadline:
+            time.sleep(.1)
+        assert not ui.FindWindow('com.vincisub.native'), 'Closed window was not retired'
         window = None
         timeline.ClearMarkInOut()
         assert selection(timeline)['duration'] == full['duration']

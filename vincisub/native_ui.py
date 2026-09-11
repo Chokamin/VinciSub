@@ -33,11 +33,11 @@ def launch(resolve, fusion, bmd):
             ui.Label({"Text": "默认识别所有可听音轨，跟随 Solo / Mute；未设入点、出点时识别整条时间线。单次最长 30 分钟。", "WordWrap": True, "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Generate", "Text": "生成字幕"}), ui.Button({"ID": "Cancel", "Text": "取消任务"})]),
             ui.Label({"ID": "Status", "WordWrap": True, "MinimumSize": [0, 45], "Weight": 0}),
-            ui.Tree({"ID": "Captions", "ColumnCount": 4, "RootIsDecorated": False, "AlternatingRowColors": True}),
-            ui.HGroup({"Weight": 0}, [ui.Label({"Text": "开始 / 结束（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Start", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.DoubleSpinBox({"ID": "End", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.Button({"ID": "Apply", "Text": "保存当前条"})]),
+            ui.Tree({"ID": "Captions", "Events": {"ItemClicked": True, "ItemDoubleClicked": True}, "ColumnCount": 4, "RootIsDecorated": False, "AlternatingRowColors": True}),
+            ui.HGroup({"Weight": 0}, [ui.Label({"Text": "开始 / 结束（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Start", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.DoubleSpinBox({"ID": "End", "Decimals": 3, "Minimum": 0, "Maximum": 1800}), ui.Button({"ID": "Apply", "Text": "保存并同步"})]),
             ui.LineEdit({"ID": "Text", "PlaceholderText": "选择一条字幕后编辑文字", "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.Label({"Text": "整体偏移（秒）", "Weight": 0}), ui.DoubleSpinBox({"ID": "Offset", "Decimals": 3, "Minimum": -86400, "Maximum": 86400, "Value": 0}), ui.Button({"ID": "Export", "Text": "保存 SRT"}), ui.Button({"ID": "Import", "Text": "写入字幕轨"})]),
-            ui.Label({"Text": "识别完成后自动写入当前时间线的字幕轨。写入后请在字幕轨内校对。", "Weight": 0, "WordWrap": True}),
+            ui.Label({"Text": "识别完成后自动写入当前时间线的字幕轨。双击字幕后在下方修改，点击「保存并同步」刷新本次字幕轨。单条样式请在校对完成后调整。", "Weight": 0, "WordWrap": True}),
         ]))
     items = window.GetItems()
     items["Model"].AddItems(["Qwen3-ASR 0.6B · 轻量", "Qwen3-ASR 1.7B · 标准"])
@@ -85,14 +85,28 @@ def launch(resolve, fusion, bmd):
             tree.AddTopLevelItem(item)
 
     def select(event=None):
-        item = (event or {}).get("item") or tree.CurrentItem()
-        if not item:
+        event = event or {}
+        item = event.get("item")
+        if item is None:
+            item = event.get("Item")
+        if item is None:
+            item = tree.CurrentItem()
+        if item is None:
+            selected = tree.SelectedItems() or []
+            if isinstance(selected, dict):
+                selected = list(selected.values())
+            item = selected[0] if selected else None
+        if item is None:
             return
         index = int(item.Text[0]) - 1
         state["selected"] = index
         row = state["rows"][index]
         items["Start"].Value, items["End"].Value = row["start"], row["end"]
         items["Text"].Text = row["text"]
+
+    def edit(event=None):
+        select(event)
+        items["Text"].SetFocus()
 
     def save(event=None):
         if not state["rows"]:
@@ -127,6 +141,13 @@ def launch(resolve, fusion, bmd):
         if directory:
             items["Status"].Text = "已保存：" + str(jobs.export(directory))
 
+    def apply(event=None):
+        save()
+        if jobs.directory and (jobs.directory/'placement-receipt.json').exists():
+            import_result()
+        else:
+            items["Status"].Text = "修改已保存。"
+
     def import_result(event=None):
         if state['placing']:
             return
@@ -137,7 +158,10 @@ def launch(resolve, fusion, bmd):
         write_json(jobs.directory/'placement.json', dict(state='running', message='正在准备写入字幕轨…'))
         log = (jobs.directory/'placement.log').open('ab')
         try:
-            state['placement'] = subprocess.Popen([str(jobs.python), '-m', 'vincisub.placement', str(jobs.directory)], cwd=str(ROOT), stdout=log, stderr=log)
+            command = [str(jobs.python), '-m', 'vincisub.placement', str(jobs.directory)]
+            if (jobs.directory/'placement-receipt.json').exists():
+                command.append('--update')
+            state['placement'] = subprocess.Popen(command, cwd=str(ROOT), stdout=log, stderr=log)
         finally:
             log.close()
         state['placing'] = True
@@ -183,7 +207,7 @@ def launch(resolve, fusion, bmd):
         done = status["state"] == "done"
         for key in ["Apply", "Export", "Import", "Text", "Start", "End", "Offset"]:
             placed = jobs.directory and (jobs.directory/"placement-receipt.json").exists()
-            items[key].Enabled = done and (not placed or key in ("Export", "Import"))
+            items[key].Enabled = done
         if done and state["loaded"] != jobs.directory:
             result = jobs.result()
             state["rows"] = result["captions"]
@@ -205,9 +229,10 @@ def launch(resolve, fusion, bmd):
         save()
         dispatcher.ExitLoop()
 
-    for key, callback in {"Refresh": refresh, "Generate": generate, "Cancel": cancel, "Apply": save, "Export": export, "Import": import_result}.items():
+    for key, callback in {"Refresh": refresh, "Generate": generate, "Cancel": cancel, "Apply": apply, "Export": export, "Import": import_result}.items():
         window.On[key].Clicked = guard(callback)
     window.On.Captions.ItemClicked = guard(select)
+    window.On.Captions.ItemDoubleClicked = guard(edit)
     window.On[WINDOW_ID].Close = guard(close)
     # Native timers deliver callbacks on the UI dispatcher thread.
     timer = ui.Timer({"ID": "VinciSubPoll", "Interval": 500, "SingleShot": False})
@@ -222,3 +247,4 @@ def launch(resolve, fusion, bmd):
     finally:
         timer.Stop()
         window.Hide()
+        window.ID = WINDOW_ID + ".closed." + str(id(window))

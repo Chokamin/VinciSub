@@ -157,7 +157,11 @@ def main():
         with os.fdopen(fd, 'w') as stream:
             stream.write(str(os.getpid()))
         owned = True
-        track = place(directory)
+        if '--update' in sys.argv[2:]:
+            from .editing import sync
+            track = sync(directory)
+        else:
+            track = place(directory)
         write_json(directory/'placement.json', dict(state='done', message=f'已写入当前时间线字幕轨 ST{track}，位置校验通过。'))
     except Exception as error:
         write_json(directory/'placement.json', dict(state='error', message=str(error)))

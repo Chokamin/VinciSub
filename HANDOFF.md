@@ -6,15 +6,19 @@
 - 默认识别所有可听音轨，跟随多轨 Solo / Mute；可指定单轨。有入出点使用范围，无标记使用整条时间线，单侧标记补齐边界；音频范围优先。
 - 音频从片段源文件解码至内存，无手动导出、无中间音频文件、无渲染任务。不复现 Fairlight 效果。
 - 已接线：原生生成结束自动启动 placement 进程，在原始时间线新建 VinciSub 字幕轨；整份 SRT 通过 AppendToTimeline 素材列表重载一次写入并回读；保存凭据避免重复，失败清理本次新增字幕。
-- 写入期间原生窗口保持显示并更新状态；写入后在原生字幕轨校对。保存 SRT 是识别结果副本，不含原生轨道后续编辑。
+- 写入期间原生窗口保持显示并更新状态；选中/双击字幕后在下方编辑文字和时间，点击「保存并同步」更新原字幕轨。保存 SRT 包含插件内保存的修改，不回读外部编辑。
 - 当前验收状态：直接 API 写入的已有字幕、精确定位与播放头恢复已通过；原生生成 → Qwen 识别 → API 自动写入原时间线完整流程通过；已有字幕保留、音视频不变与重复预防复测通过。
 
 ## 下一步任务
+
+- 已修复 UI 选中项可能返回一基索引字典的问题；关闭后将窗口 ID 退役，避免 FindWindow 命中停止响应的旧窗口。
 
 1. 验证长音频、更多实际口播、非 25fps、英文界面和高级音频路由。
 2. 新字幕写入前明确停用旧字幕轨、启用新字幕轨，修复仅启用新轨时偶发误投旧轨的问题；失败恢复原启用状态。继续保留错轨清理和诊断，不依赖 trackIndex 单独决定落点。
 
 ## 已知风险
+
+- 同步会重建本次字幕轨内的字幕片段，保留轨道和其他轨道；单条样式请在校对后设置。同步前核对旧 ID/文字/时间，外部编辑或锁轨时拒绝覆盖。失败恢复旧内容并更新凭据，恢复失败提示检查 edit-backup.json。
 
 - 自动落轨限制 Resolve 21.1 / 整数 24、25、30、48、50、60fps；实际写入验证 25fps。没有界面语言、Swift 或辅助功能依赖；其他平台与帧率仍待实测。
 - 使用 AppendToTimeline 的素材列表重载；clipInfo 字典会将 SRT 放到末尾，source startFrame/endFrame 曾触发退出，不要混用。启用新字幕轨后等待异步状态生效。
@@ -29,9 +33,9 @@
 
 ## 需要验证的内容
 
-- `.venv/bin/python -B -m unittest discover -s tests -v`：52 项通过。
-- `.venv/bin/python -m scripts.verify_placement .vincisub/verification/mandarin.mp4`：独立项目保留已有字幕、准确定位三条新字幕、音视频不变与重复预防；直接 API 版本通过，包含已有字幕数量和文字前置断言，并核对播放头与页面不变。
-- `.venv/bin/python -m scripts.verify_timeline .vincisub/verification/mandarin.mp4`：双音轨、范围、静音筛选、原生生成、真实识别到自动落轨。完整流程通过：生成两条字幕，位于相对时间线 2.04–4.20s 与 4.36–4.84s，原始时间线身份不变、无渲染和音频输出。
+- `.venv/bin/python -B -m unittest discover -s tests -v`：58 项通过。
+- `.venv/bin/python -m scripts.verify_placement .vincisub/verification/mandarin.mp4`：独立项目保留已有字幕、准确定位三条新字幕、音视频不变与重复预防；直接 API 版本通过，包含已有字幕数量和文字前置断言，并核对播放头与页面不变；新增插件修改的文字/时间同步及模拟追加拒绝后的真实恢复验证。
+- `.venv/bin/python -m scripts.verify_timeline .vincisub/verification/mandarin.mp4`：双音轨、范围、静音筛选、原生生成、真实识别到自动落轨。完整流程通过：生成两条字幕，位于相对时间线 2.04–4.20s 与 4.36–4.84s，原始时间线身份不变、无渲染和音频输出；新增选中字幕、编辑文字、保存同步、字幕轨数量不增及关闭窗口回收验证。
 - `.venv/bin/python -m scripts.verify_resolve .vincisub/verification/mandarin.mp4`：旧媒体池导入兼容回归已通过。
 - 所有实测使用保存后新建的独立项目，finally 恢复原项目并清理测试项目。不要用用户原项目写入验证。
 - 提交前检查 git diff --check 和暂存差异，提交后检查工作区干净。

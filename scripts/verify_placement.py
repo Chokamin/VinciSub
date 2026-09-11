@@ -74,6 +74,42 @@ def main():
         assert temporary.GetCurrentTimeline().GetUniqueId() == identity
         assert place(output, resolve) == track
         assert timeline.GetTrackCount('subtitle') == track
+        from vincisub.editing import sync
+        old_ids = [i.GetUniqueId() for i in captions]
+        rows[0] = dict(start=.2,end=1.2,text='在插件里修改后的字幕')
+        write_json(output/'result.json',dict(captions=rows,duration=8.68,offset=0))
+        assert sync(output,resolve) == track
+        updated = timeline.GetItemListInTrack('subtitle',track)
+        assert [(i.GetName(),i.GetStart(),i.GetEnd()) for i in updated] == [(c['text'],90000+round(c['start']*25),90000+round(c['end']*25)) for c in rows]
+        assert [i.GetName() for i in updated][1:] == [c['text'] for c in rows][1:]
+        assert timeline.GetTrackCount('subtitle') == track
+        assert state() == before
+        assert existing == [(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in timeline.GetItemListInTrack('subtitle',1)]
+        # Simulate an API append refusal after deletion; real restoration must succeed.
+        class Proxy:
+            def __init__(self, wrapped, **overrides):
+                self.wrapped, self.overrides = wrapped, overrides
+            def __getattr__(self,key):
+                return self.overrides.get(key,getattr(self.wrapped,key))
+        calls = [0]
+        def refuse_once(media):
+            calls[0] += 1
+            return [] if calls[0] == 1 else pool.AppendToTimeline(media)
+        wrapped_pool = Proxy(pool,AppendToTimeline=refuse_once)
+        wrapped_project = Proxy(temporary,GetMediaPool=lambda:wrapped_pool)
+        wrapped_manager = Proxy(manager,GetCurrentProject=lambda:wrapped_project)
+        wrapped_resolve = Proxy(resolve,GetProjectManager=lambda:wrapped_manager)
+        failed_rows = [dict(r) for r in rows]
+        failed_rows[0]['text'] = '这次更新应失败并恢复'
+        write_json(output/'result.json',dict(captions=failed_rows,duration=8.68,offset=0))
+        try:
+            sync(output,wrapped_resolve)
+            raise AssertionError('Expected a refused update')
+        except RuntimeError as error:
+            assert '同步后的' in str(error), str(error)
+        restored = timeline.GetItemListInTrack('subtitle',track)
+        assert [(i.GetName(),i.GetStart(),i.GetEnd()) for i in restored] == [(c['text'],90000+round(c['start']*25),90000+round(c['end']*25)) for c in rows]
+        assert state() == before
         print(json.dumps(dict(automatic_placement=True, same_timeline=True, original_media_unchanged=True, duplicate_prevented=True, captions=len(rows))))
     finally:
         manager.CloseProject(temporary)
