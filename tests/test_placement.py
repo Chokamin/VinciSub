@@ -83,6 +83,8 @@ class PlacementTests(unittest.TestCase):
             self.assertEqual(place(d,r,control),2)
             t.AddTrack.assert_called_once_with('subtitle')
             t.DeleteTrack.assert_not_called()
+            switches = [c.args for c in t.SetTrackEnable.call_args_list]
+            self.assertEqual(switches, [('subtitle',1,False),('subtitle',2,True)])
 
     @patch('vincisub.placement.import_media', return_value=[object()])
     def test_inspector_mismatch_rolls_back_only_new_track(self, imported):

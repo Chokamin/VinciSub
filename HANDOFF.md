@@ -7,14 +7,12 @@
 - 音频从片段源文件解码至内存，无手动导出、无中间音频文件、无渲染任务。不复现 Fairlight 效果。
 - 已接线：原生生成结束自动启动 placement 进程，在原始时间线新建 VinciSub 字幕轨；逐条 SRT 追加后由独立 macOS Helper 调整原生检查器起止帧并回读；保存凭据避免重复，失败清理本次新增字幕。
 - 定位期间原生窗口隐藏，结束显示状态；写入后在原生字幕轨校对。保存 SRT 是识别结果副本，不含原生轨道后续编辑。
-- 当前验收状态：终端助手定位三条字幕、保留已有字幕、音视频不变、重复预防已通过；独立应用最终完整流程仍待重新授权后验证，不能宣称已完成验收。
+- 当前验收状态：用户重新添加 Helper 授权后，独立应用预检和完整原生生成 → Qwen 识别 → 原时间线字幕轨流程已通过；已有字幕保留、音视频不变与重复预防复测通过。
 
 ## 下一步任务
 
-1. 用户已开启过 Helper 权限，但修复启动重新编译后，系统仍返回未授权。已请求用户移除后重新添加 `.vincisub/bin/VinciSub Helper.app` 并开启；收到回复后继续预检和两个实测，不再无故重编译助手。
-2. 执行 verify_timeline 完整原生按钮 → Qwen → 原时间线字幕轨；执行 verify_placement 已有字幕场景。两者默认必须成功，否则保持未验收状态。
-3. 通过后更新本文件和 README 的验收状态，回写 PROJECT_MEMORY 并提交 Git。
-4. 后续验证长音频、更多实际口播、非 25fps、英文界面和高级音频路由。
+1. 验证长音频、更多实际口播、非 25fps、英文界面和高级音频路由。
+2. 新字幕写入前明确停用旧字幕轨、启用新字幕轨，修复仅启用新轨时偶发误投旧轨的问题；失败恢复原启用状态。继续保留错轨清理和诊断，不依赖 trackIndex 单独决定落点。
 
 ## 已知风险
 
@@ -27,14 +25,14 @@
 
 ## 阻塞点
 
-- 当前独立 Helper 的系统授权与完整链路验收尚未完成。直接由 Resolve 子进程发送 Apple Events 返回 -1743；已改独立 app 通过 LaunchServices 启动。
+- 系统授权阻塞已解除，独立 app 通过 LaunchServices 启动的原生完整流程已实测通过。保留独立 app 方式，不能改回缺少自动化权限的 Resolve 子进程。
 - macOS 27 / 本机 Swift 默认部署目标异常为 28，已显式编译目标 macOS 13；助手初始化 NSApplication，通过请求/响应 JSON 回传，避免 open -W 等待。
 
 ## 需要验证的内容
 
 - `.venv/bin/python -B -m unittest discover -s tests -v`：52 项通过。
-- `.venv/bin/python -m scripts.verify_placement .vincisub/verification/mandarin.mp4`：独立项目保留已有字幕、准确定位三条新字幕、音视频不变与重复预防；旧终端助手通过，当前独立 app 待授权后复测。
-- `.venv/bin/python -m scripts.verify_timeline .vincisub/verification/mandarin.mp4`：双音轨、范围、静音筛选、原生生成、真实识别到自动落轨。当前真实 ASR 已完成，但助手权限/启动失败，完整测试未通过。
+- `.venv/bin/python -m scripts.verify_placement .vincisub/verification/mandarin.mp4`：独立项目保留已有字幕、准确定位三条新字幕、音视频不变与重复预防；当前独立 app 修复后连续三轮通过；测试新增既有字幕数量和文字前置断言。
+- `.venv/bin/python -m scripts.verify_timeline .vincisub/verification/mandarin.mp4`：双音轨、范围、静音筛选、原生生成、真实识别到自动落轨。完整流程通过：生成两条字幕，位于相对时间线 2.04–4.20s 与 4.36–4.84s，原始时间线身份不变、无渲染和音频输出。
 - `.venv/bin/python -m scripts.verify_resolve .vincisub/verification/mandarin.mp4`：旧媒体池导入兼容回归已通过。
 - 所有实测使用保存后新建的独立项目，finally 恢复原项目并清理测试项目。不要用用户原项目写入验证。
 - 提交前检查 git diff --check 和暂存差异，提交后检查工作区干净。

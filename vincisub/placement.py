@@ -134,6 +134,9 @@ def place(directory, resolve=None, control=bridge):
         created = True
         if not timeline.SetTrackName('subtitle', track, name):
             raise RuntimeError('无法标识本次字幕轨。')
+        for n in previous_enabled:
+            if not timeline.SetTrackEnable('subtitle', n, False):
+                raise RuntimeError('无法切换当前字幕轨。')
         if not timeline.SetTrackEnable('subtitle', track, True):
             raise RuntimeError('无法启用本次字幕轨。')
         time.sleep(.3)  # Resolve applies the active subtitle track asynchronously.
@@ -165,6 +168,8 @@ def place(directory, resolve=None, control=bridge):
                          for i in timeline.GetItemListInTrack('subtitle', n) or []
                          if i.GetUniqueId() not in before_ids]
             if misplaced or len(added) != 1 or added[0].GetName() != target['text']:
+                write_json(directory/'placement-diagnostic.json', dict(
+                    added=[i.GetName() for i in added], misplaced=[i.GetName() for i in misplaced], target=target['text']))
                 raise RuntimeError('字幕导入轨道、数量或文字不一致。')
             item = added[0]
             items.append(item)

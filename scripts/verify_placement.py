@@ -56,6 +56,7 @@ def main():
         seed_media = import_media(pool, seed)
         pool.AppendToTimeline([dict(mediaPoolItem=seed_media[0],trackIndex=1)])
         existing = [(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in timeline.GetItemListInTrack('subtitle',1)]
+        assert len(existing) == 1 and existing[0][3] == '保留原有字幕', 'Existing subtitle fixture was not created'
         before = state()
         write_json(output/'resolve.json', metadata)
         rows = [dict(start=.12,end=1.12,text='第一条字幕'),dict(start=2.2,end=3.6,text='第二条字幕'),dict(start=5,end=7.6,text='第三条字幕')]
