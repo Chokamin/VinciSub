@@ -71,9 +71,13 @@ def main():
             window = ui.FindWindow('com.vincisub.native')
         assert window, 'Native window failed to open'
         widgets = window.GetItems()
-        widgets['Vocabulary'].PlainText = '中文字幕工具，中文字幕工具'
-        widgets['UseVocabulary'].Checked = True
-        ui.QueueEvent(widgets['SaveVocabulary'],'Clicked',{})
+        ui.QueueEvent(widgets['VocabularySettings'],'Clicked',{})
+        time.sleep(.3)
+        vocabulary_window=ui.FindWindow('com.vincisub.native.vocabulary')
+        vocabulary_widgets=vocabulary_window.GetItems()
+        vocabulary_widgets['Vocabulary'].PlainText = '中文字幕工具，中文字幕工具'
+        vocabulary_widgets['UseVocabulary'].Checked = True
+        ui.QueueEvent(vocabulary_widgets['SaveVocabulary'],'Clicked',{})
         time.sleep(.3)
         assert json.loads(vocabulary_path.read_text(encoding='utf-8'))['terms'] == ['中文字幕工具']
         assert widgets['Track'].TopLevelItemCount() == 2
@@ -158,7 +162,18 @@ def main():
 
         timeline.SetMarkInOut(125,216)
         widgets['Track'].TopLevelItem(1).CheckState[0] = 'Unchecked'
-        widgets['UseVocabulary'].Checked = False
+        ui.QueueEvent(widgets['VocabularySettings'],'Clicked',{})
+        time.sleep(.3)
+        assert vocabulary_widgets['Vocabulary'].PlainText == '中文字幕工具'
+        vocabulary_widgets['Vocabulary'].PlainText = '不应该保存'
+        ui.QueueEvent(vocabulary_widgets['CancelVocabulary'],'Clicked',{})
+        time.sleep(.3)
+        assert json.loads(vocabulary_path.read_text(encoding='utf-8'))['terms'] == ['中文字幕工具']
+        ui.QueueEvent(widgets['VocabularySettings'],'Clicked',{})
+        time.sleep(.3)
+        vocabulary_widgets['UseVocabulary'].Checked = False
+        ui.QueueEvent(vocabulary_widgets['SaveVocabulary'],'Clicked',{})
+        time.sleep(.3)
         previous_job = job
         ui.QueueEvent(widgets['Generate'],'Clicked',{})
         deadline = time.monotonic()+150

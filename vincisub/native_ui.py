@@ -27,14 +27,12 @@ def launch(resolve, fusion, bmd):
         {"ID": WINDOW_ID, "WindowTitle": "VinciSub · 奇奇字幕", "Geometry": [180, 140, 800, 700]},
         ui.VGroup([
             ui.Label({"Text": "VinciSub  ·  奇奇字幕", "Weight": 0, "Font": ui.Font({"PixelSize": 22, "Bold": True})}),
-            ui.Button({"ID": "Refresh", "Text": "刷新时间线 / 音轨", "Weight": 0}),
+            ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Refresh", "Text": "刷新时间线 / 音轨"}), ui.Button({"ID": "VocabularySettings", "Text": "词库设置…", "Weight": 0})]),
             ui.Label({"ID": "Timeline", "Weight": 0}),
             ui.Label({"Text": "音轨（可多选，不勾选时自动识别）", "Weight": 0}),
             ui.Tree({"ID": "Track", "ColumnCount": 1, "HeaderHidden": True, "RootIsDecorated": False, "MinimumSize": [0, 75], "MaximumSize": [16777215, 110], "Weight": 0}),
             ui.Label({"ID": "Range", "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.ComboBox({"ID": "Model"}), ui.Label({"Text": "每条字数", "Weight": 0}), ui.SpinBox({"ID": "Chars", "Minimum": 6, "Maximum": 60, "Value": 20})]),
-            ui.HGroup({"Weight": 0}, [ui.CheckBox({"ID": "UseVocabulary", "Text": "启用词库"}), ui.Button({"ID": "SaveVocabulary", "Text": "保存词库"})]),
-            ui.TextEdit({"ID": "Vocabulary", "PlaceholderText": "人名、品牌、专业词，每行一个或逗号分隔；最多 100 个词", "AcceptRichText": False, "MinimumSize": [0, 50], "MaximumSize": [16777215, 65], "Weight": 0}),
             ui.Label({"Text": "未设入点、出点时识别整条时间线。单次最长 30 分钟。", "WordWrap": True, "Weight": 0}),
             ui.HGroup({"Weight": 0}, [ui.Button({"ID": "Generate", "Text": "生成字幕"}), ui.Button({"ID": "Cancel", "Text": "取消任务"})]),
             ui.Button({"ID": "ReadAll", "Text": "读取全部字幕", "Weight": 0}),
@@ -46,9 +44,43 @@ def launch(resolve, fusion, bmd):
             ui.Label({"Text": "识别完成后自动写入当前时间线的字幕轨。双击字幕后在下方修改，点击「保存并同步」刷新本次字幕轨。单条样式请在校对完成后调整。", "Weight": 0, "WordWrap": True}),
         ]))
     items = window.GetItems()
-    saved_vocabulary = vocabulary.load(jobs.data)
-    items["Vocabulary"].PlainText = "\n".join(saved_vocabulary["terms"])
-    items["UseVocabulary"].Checked = saved_vocabulary["enabled"]
+    vocabulary_window_id = WINDOW_ID + '.vocabulary'
+    vocabulary_window = dispatcher.AddWindow(
+        {"ID": vocabulary_window_id, "WindowTitle": "奇奇字幕 · 词库设置", "Geometry": [300, 220, 520, 360]},
+        ui.VGroup([
+            ui.CheckBox({"ID": "UseVocabulary", "Text": "启用词库", "Weight": 0}),
+            ui.Label({"Text": "每行一个词，或用逗号分隔。最多 100 个词，建议只添加当前素材相关的专名。", "WordWrap": True, "Weight": 0}),
+            ui.TextEdit({"ID": "Vocabulary", "AcceptRichText": False, "PlaceholderText": "人名、品牌、专业词"}),
+            ui.Label({"ID": "VocabularyStatus", "Text": "词库用于识别提示，仍需校对。", "WordWrap": True, "Weight": 0}),
+            ui.HGroup({"Weight": 0}, [ui.Button({"ID": "CancelVocabulary", "Text": "取消"}), ui.Button({"ID": "SaveVocabulary", "Text": "保存"})]),
+        ]))
+    vocabulary_items = vocabulary_window.GetItems()
+
+    def dismiss_vocabulary(event=None):
+        vocabulary_window.Hide()
+        window.Enabled = True
+
+    def open_vocabulary(event=None):
+        value = vocabulary.load(jobs.data)
+        vocabulary_items['Vocabulary'].PlainText = '\n'.join(value['terms'])
+        vocabulary_items['UseVocabulary'].Checked = value['enabled']
+        vocabulary_items['VocabularyStatus'].Text = '词库用于识别提示，仍需校对。'
+        window.Enabled = False
+        vocabulary_window.Show()
+        vocabulary_window.Raise()
+
+    def save_vocabulary(event=None):
+        try:
+            value = vocabulary.save(jobs.data,vocabulary_items['Vocabulary'].PlainText,vocabulary_items['UseVocabulary'].Checked)
+        except ValueError as error:
+            vocabulary_items['VocabularyStatus'].Text = str(error)
+            return
+        dismiss_vocabulary()
+        items['Status'].Text = f"已保存 {len(value['terms'])} 个词。"
+
+    vocabulary_window.On.SaveVocabulary.Clicked = save_vocabulary
+    vocabulary_window.On.CancelVocabulary.Clicked = dismiss_vocabulary
+    vocabulary_window.On[vocabulary_window_id].Close = dismiss_vocabulary
     items["Model"].AddItems(["Qwen3-ASR 0.6B · 轻量", "Qwen3-ASR 1.7B · 标准"])
     tree = items["Captions"]
     header = tree.NewItem()
@@ -137,19 +169,13 @@ def launch(resolve, fusion, bmd):
         state["rows"] = rows
         render_rows()
 
-    def save_vocabulary(event=None):
-        value = vocabulary.save(jobs.data,items['Vocabulary'].PlainText,items['UseVocabulary'].Checked)
-        if event is not None:
-            items['Status'].Text = f"已保存 {len(value['terms'])} 个词。词库用于识别提示，仍需校对。"
-        return value
-
     def generate(event=None):
         save()
         info = describe_timeline(resolve)
         if info["timeline_id"] != state["timeline_id"]:
             refresh()
             raise ValueError("时间线已切换，请确认音轨后重新生成。")
-        hints = save_vocabulary()
+        hints = vocabulary.load(jobs.data)
         plan = snapshot(resolve, selected_tracks())
         show_range(plan)
         jobs.start("timeline", model="qwen-0.6b" if items["Model"].CurrentIndex == 0 else "qwen-1.7b", max_chars=items["Chars"].Value, timeline=plan, vocabulary=hints["terms"] if hints["enabled"] else [])
@@ -220,7 +246,7 @@ def launch(resolve, fusion, bmd):
 
     def poll(event=None):
         if state['placing']:
-            for key in ['Generate', 'UseVocabulary', 'Vocabulary', 'SaveVocabulary', 'ReadAll', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End', 'Offset']:
+            for key in ['Generate', 'VocabularySettings', 'ReadAll', 'Track', 'Refresh', 'Model', 'Chars', 'Apply', 'Export', 'Import', 'Text', 'Start', 'End', 'Offset']:
                 items[key].Enabled = False
             items['Cancel'].Enabled = True
             path = jobs.directory/'placement.json'
@@ -239,7 +265,7 @@ def launch(resolve, fusion, bmd):
             items["Status"].Text = status["message"]
             state["status"] = signature
         busy = jobs.busy()
-        for key in ["Generate", "UseVocabulary", "Vocabulary", "SaveVocabulary", "ReadAll", "Track", "Refresh", "Model", "Chars"]:
+        for key in ["Generate", "VocabularySettings", "ReadAll", "Track", "Refresh", "Model", "Chars"]:
             items[key].Enabled = not busy
         items["Cancel"].Enabled = busy
         if not busy:
@@ -281,11 +307,10 @@ def launch(resolve, fusion, bmd):
         if jobs.busy() or state["placing"]:
             items["Status"].Text = "任务仍在运行，请先取消任务再关闭窗口。"
             return
-        save_vocabulary()
         save()
         dispatcher.ExitLoop()
 
-    for key, callback in {"SaveVocabulary": save_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Apply": apply, "Export": export, "Import": import_result}.items():
+    for key, callback in {"VocabularySettings": open_vocabulary, "ReadAll": read_captions, "Refresh": refresh, "Generate": generate, "Cancel": cancel, "Apply": apply, "Export": export, "Import": import_result}.items():
         window.On[key].Clicked = guard(callback)
     window.On.Captions.ItemClicked = guard(select)
     window.On.Captions.ItemDoubleClicked = guard(edit)
@@ -302,5 +327,7 @@ def launch(resolve, fusion, bmd):
         dispatcher.RunLoop()
     finally:
         timer.Stop()
+        vocabulary_window.Hide()
+        vocabulary_window.ID = vocabulary_window_id + ".closed." + str(id(vocabulary_window))
         window.Hide()
         window.ID = WINDOW_ID + ".closed." + str(id(window))
