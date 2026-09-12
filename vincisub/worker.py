@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import traceback
+import unicodedata
 from dataclasses import asdict
 from pathlib import Path
 
@@ -12,9 +13,19 @@ from .audio import chunks, normalize
 from .storage import DATA, write_json
 from .subtitles import Word, make_captions, aligned_text_words, bridge_brief_gaps
 from .reference import context
+from .optimize import optimize
 
 
 from .models import MODELS, ALIGNER, ensure, cache_lock
+
+
+def generated_rows(words, max_chars):
+    """Use punctuation for segmentation, then remove it from new subtitles."""
+    captions = bridge_brief_gaps(make_captions(words, max_chars=max_chars))
+    rows = [asdict(c) for c in captions
+            if any(not ch.isspace() and not unicodedata.category(ch).startswith('P')
+                   for ch in c.text)]
+    return optimize(rows, all_punctuation=True) if rows else []
 
 
 def with_punctuation(items, text, convert):
@@ -100,17 +111,16 @@ def run(job_dir):
         words.extend(recognize_with_reference_fallback(recognize,hints,request,warnings))
     if any(word.start == word.end for word in words):
         warnings.append('部分词语时间戳已合并到相邻词语，请校对这些字幕的起止时间。')
-    captions = bridge_brief_gaps(make_captions(words, max_chars=request["max_chars"]))
-    if not captions:
+    rows = generated_rows(words, request["max_chars"])
+    if not rows:
         raise ValueError("没有识别到人声。请检查音轨或换一段清晰的人声录音。")
-    rows = [asdict(c) for c in captions]
     if timeline:
         for row in rows:
             row["start"] = round(row["start"] + timeline["offset"], 3)
             row["end"] = round(row["end"] + timeline["offset"], 3)
         duration = (timeline["timeline_end"] - timeline["timeline_start"]) / timeline["fps"]
     write_json(job_dir / "result.json", dict(captions=rows, duration=duration, model=request["model"], device=device, filename=request["filename"], offset=0, warnings=warnings))
-    status("done", f"已生成 {len(captions)} 条字幕，可以开始校对。", 100)
+    status("done", f"已生成 {len(rows)} 条字幕，可以开始校对。", 100)
 
 
 def main():

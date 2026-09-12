@@ -16,6 +16,23 @@ def aligned(text):
 
 
 class SegmentationTests(unittest.TestCase):
+    def test_new_generation_removes_punctuation_after_segmentation(self):
+        from vincisub.worker import generated_rows
+        text = '今天开始，明天继续。“苹果、香蕉——都要！”'
+        words = aligned(text)
+        expected = bridge_brief_gaps(make_captions(words))
+        rows = generated_rows(words, 20)
+        import unicodedata
+        self.assertEqual(len(rows), len(expected))
+        self.assertEqual([(r['start'], r['end']) for r in rows], [(c.start, c.end) for c in expected])
+        self.assertEqual(''.join(r['text'] for r in rows), '今天开始明天继续苹果香蕉都要')
+        self.assertFalse(any(unicodedata.category(c).startswith('P') for r in rows for c in r['text']))
+
+    def test_new_generation_ignores_punctuation_only_output(self):
+        from vincisub.worker import generated_rows
+        self.assertEqual(generated_rows([Word('……', 0, 1)], 20), [])
+        self.assertEqual(generated_rows([], 20), [])
+
     def test_unpunctuated_phrase_uses_measured_breath(self):
         words = [Word('我们今天去海边', 0, 1.4), Word('看看日落', 1.7, 2.8)]
         rows = make_captions(words)

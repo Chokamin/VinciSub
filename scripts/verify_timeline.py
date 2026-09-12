@@ -123,6 +123,9 @@ def main():
         assert not (job/'audio.wav').exists() and not (job/'source').exists()
         time.sleep(1)
         assert widgets['Captions'].TopLevelItemCount() == len(result['captions'])
+        import unicodedata
+        assert all(not unicodedata.category(c).startswith('P')
+                   for row in result['captions'] for c in row['text']), 'New subtitles contain punctuation'
         deadline = time.monotonic() + 180
         placement = {}
         while time.monotonic() < deadline:
