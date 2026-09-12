@@ -212,6 +212,8 @@ def main():
             track = sync(directory)
         else:
             track = place(directory)
+        from .cleanup import clean
+        clean(directory)
         write_json(directory/'placement.json', dict(state='done', message=f'已写入当前时间线字幕轨 ST{track}，位置校验通过。'))
     except Exception as error:
         write_json(directory/'placement.json', dict(state='error', message=str(error)))

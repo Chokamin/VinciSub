@@ -130,6 +130,8 @@ def main():
                     break
             time.sleep(.5)
         assert placement.get('state') == 'done', placement
+        cleanup = json.loads((job/'cleanup.json').read_text(encoding='utf-8'))
+        assert cleanup['removed'] >= 1 and 'error' not in cleanup, cleanup
         assert temporary.GetCurrentTimeline().GetUniqueId() == second['timeline_id']
         subtitles = timeline.GetItemListInTrack('subtitle', timeline.GetTrackCount('subtitle'))
         assert len(subtitles) == len(result['captions'])

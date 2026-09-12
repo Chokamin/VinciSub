@@ -113,3 +113,9 @@ git diff --check
 主面板右上角「检查更新」打开原生窗口，显示当前版本、检查结果和更新说明；发现新版后点击「查看新版」打开发布页。检查在后台执行，可关闭窗口或重试；不会自动下载或覆盖本机文件。
 
 发布源为 [Chokamin/VinciSub](https://github.com/Chokamin/VinciSub)，配置位于 `update-source.json`。后续发布正式 Release 时，标签采用 `v1.2.3`，并同步更新 `pyproject.toml` 与 `vincisub/__init__.py` 版本号。检查使用 [GitHub 最新正式 Release API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)，不跟随普通 Git 提交或预发布版本。
+
+### 自动整理字幕中间素材
+
+每次生成、编辑或优化字幕成功同步后，插件自动清理当前项目媒体池里的 `placement-…` / `edit-…` 中间 SRT 素材，也会检查同项目以前成功任务积累的素材，无需点击清理按钮。
+
+清理以本地任务路径和项目凭据确认归属，并检查项目内所有时间线的素材引用。用户导入的普通字幕、仍被引用的素材、失败或未完成任务的素材不会被清理；本地 SRT 和恢复记录保留。无法确认时跳过，诊断写入任务目录 `cleanup.json`。当前仅在 Resolve 21.1 启用。
