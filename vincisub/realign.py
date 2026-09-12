@@ -47,9 +47,9 @@ def reconcile(original,proposed,failed,tail,duration,fps):
     return rows,sorted(failed)
 
 
-def split_aligned(row, words, max_chars, fps):
+def split_aligned(row, words, max_chars, fps, protected_terms=()):
     """Split using measured word boundaries; preserve the caption's outer span."""
-    captions = bridge_brief_gaps(make_captions(words, max_chars=max_chars))
+    captions = bridge_brief_gaps(make_captions(words, max_chars=max_chars, protected_terms=protected_terms))
     if len(captions) <= 1:
         return [dict(row)]
     result = [asdict(c) for c in captions]
@@ -127,7 +127,7 @@ def run(directory):
                 if i in failed or i not in measured:
                     expanded_failed.append(len(expanded));expanded.append(dict(row));continue
                 try:
-                    parts=split_aligned(row,measured[i],req.get('max_chars',20),req['timeline']['fps'])
+                    parts=split_aligned(row,measured[i],req.get('max_chars',20),req['timeline']['fps'],req.get('vocabulary', []))
                 except ValueError as error:
                     print(f'Resegmentation skipped {i+1}: {error}',flush=True)
                     expanded_failed.append(len(expanded));parts=[dict(row)]

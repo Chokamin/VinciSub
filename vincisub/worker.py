@@ -5,7 +5,6 @@ import json
 import os
 import shutil
 import traceback
-import unicodedata
 from dataclasses import asdict
 from pathlib import Path
 
@@ -13,19 +12,16 @@ from .audio import chunks, normalize
 from .storage import DATA, write_json
 from .subtitles import Word, make_captions, aligned_text_words, bridge_brief_gaps
 from .reference import context
-from .optimize import optimize
+from .text_units import clean_generated_text
 
 
 from .models import MODELS, ALIGNER, ensure, cache_lock
 
 
-def generated_rows(words, max_chars):
+def generated_rows(words, max_chars, protected_terms=()):
     """Use punctuation for segmentation, then remove it from new subtitles."""
-    captions = bridge_brief_gaps(make_captions(words, max_chars=max_chars))
-    rows = [asdict(c) for c in captions
-            if any(not ch.isspace() and not unicodedata.category(ch).startswith('P')
-                   for ch in c.text)]
-    return optimize(rows, all_punctuation=True) if rows else []
+    captions = bridge_brief_gaps(make_captions(words, max_chars=max_chars, protected_terms=protected_terms))
+    return [dict(asdict(c), text=text) for c in captions if (text := clean_generated_text(c.text))]
 
 
 def with_punctuation(items, text, convert):
@@ -111,7 +107,7 @@ def run(job_dir):
         words.extend(recognize_with_reference_fallback(recognize,hints,request,warnings))
     if any(word.start == word.end for word in words):
         warnings.append('部分词语时间戳已合并到相邻词语，请校对这些字幕的起止时间。')
-    rows = generated_rows(words, request["max_chars"])
+    rows = generated_rows(words, request["max_chars"], request.get('vocabulary', []))
     if not rows:
         raise ValueError("没有识别到人声。请检查音轨或换一段清晰的人声录音。")
     if timeline:

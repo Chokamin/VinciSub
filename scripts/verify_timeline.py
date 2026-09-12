@@ -280,12 +280,23 @@ def main():
         assert read_all(resolve)['rows']==before_opt['rows']
         ui.QueueEvent(widgets['Optimize'],'Clicked',{});time.sleep(.2)
         opt['OptimizeTrack'].CurrentIndex=track_count-1
+        previous_job=json.loads((DATA/'native-latest.json').read_text(encoding='utf-8'))['id']
         ui.QueueEvent(opt['ApplyOptimize'],'Clicked',{})
         deadline=time.monotonic()+30
+        actual=None
         while time.monotonic()<deadline:
             time.sleep(.5)
-            actual=read_all(resolve)['tracks'][track_count]['captions']
-            if actual==expected and not widgets['Cancel'].Enabled:break
+            current_job=json.loads((DATA/'native-latest.json').read_text(encoding='utf-8'))['id']
+            placement_path=DATA/'jobs'/current_job/'placement.json'
+            if current_job==previous_job or not placement_path.exists():
+                continue
+            placement=json.loads(placement_path.read_text(encoding='utf-8'))
+            assert placement['state'] not in ('error','failed'),placement
+            # Resolve invalidates item handles while the track is rebuilt.
+            # Read the track only after this specific sync has completed.
+            if placement['state']=='done' and not widgets['Cancel'].Enabled:
+                actual=read_all(resolve)['tracks'][track_count]['captions']
+                break
         assert actual==expected,(actual,expected)
         assert other_before==[(i.GetUniqueId(),i.GetStart(),i.GetEnd(),i.GetName()) for i in timeline.GetItemListInTrack('subtitle',other_track)]
 

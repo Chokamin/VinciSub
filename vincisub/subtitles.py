@@ -3,6 +3,7 @@
 import math
 import re
 from dataclasses import asdict, dataclass
+from .text_units import protected_ranges, display_length
 
 
 @dataclass(frozen=True)
@@ -74,9 +75,18 @@ def merge_instant_words(words):
             pending.append(word)
             continue
         if pending:
-            if any(abs(w.start - word.start) > .08 for w in pending):
+            if all(abs(w.start - word.start) <= .08 + 1e-9 for w in pending):
+                word = Word(join_words(pending + [word]), min(pending[0].start, word.start), word.end)
+            elif result and all(-.08 <= w.start-result[-1].end <= .2 + 1e-9
+                                and w.start <= word.start for w in pending):
+                # An interior instantaneous token can belong to the preceding
+                # measured word, just like the already-supported trailing case.
+                # Preserve its measured instant; do not assign an invented span.
+                previous = result.pop()
+                result.append(Word(join_words([previous] + pending), previous.start,
+                                   max(previous.end, max(w.end for w in pending))))
+            else:
                 raise ValueError("模型返回的词语时间戳不完整，无法可靠对齐字幕；这与入点、出点设置无关。")
-            word = Word(join_words(pending + [word]), min(pending[0].start, word.start), word.end)
             pending.clear()
         result.append(word)
     if pending:
@@ -139,26 +149,37 @@ def aligned_text_words(tokens, text):
     return words
 
 
-def lexical_words(words, gap):
+def lexical_words(words, gap, protected_terms=()):
     """Join measured Chinese characters inside dictionary words, not silences."""
-    text = ''.join(w.text.strip() for w in words)
-    if not re.search(r'[\u3400-\u9fff]', text):
-        return words
-    import jieba
-    jieba.setLogLevel(40)
-    boundaries = {end for _, _, end in jieba.tokenize(text, HMM=False)}
-    result, pending, cursor = [], [], 0
+    parts, ends, cursor, previous = [], [], 0, ''
+    for word in words:
+        token = word.text.strip()
+        separator = (' ' if previous and token and previous[-1].isascii()
+                     and previous[-1].isalnum() and token[0].isascii() and token[0].isalnum() else '')
+        parts.extend((separator, token))
+        cursor += len(separator) + len(token)
+        ends.append(cursor)
+        previous = token
+    text = ''.join(parts)
+    if re.search(r'[\u3400-\u9fff]', text):
+        import jieba
+        jieba.setLogLevel(40)
+        boundaries = {end for _, _, end in jieba.tokenize(text, HMM=False)}
+    else:
+        boundaries = set(ends)
+    for left, right in protected_ranges(text, protected_terms):
+        boundaries.difference_update(range(left+1, right))
+    result, pending = [], []
     for i, word in enumerate(words):
         pending.append(word)
-        cursor += len(word.text.strip())
-        if (cursor in boundaries or i+1 == len(words)
+        if (ends[i] in boundaries or i+1 == len(words)
                 or words[i+1].start-word.end >= gap):
             result.append(Word(join_words(pending), pending[0].start, pending[-1].end))
             pending = []
     return result
 
 
-def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5):
+def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5, protected_terms=()):
     if not 6 <= max_chars <= 60:
         raise ValueError("每条字数需在 6–60 之间。")
     captions, pending = [], []
@@ -177,7 +198,7 @@ def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5):
             raise ValueError("识别时间戳发生倒序，无法可靠生成字幕。")
         normalized.append(Word(word.text, start, end))
         last_end = end
-    measured = lexical_words(normalized, gap)
+    measured = lexical_words(normalized, gap, protected_terms)
     last_end = 0.0
     for index, word in enumerate(measured):
         if not word.text.strip():
@@ -197,7 +218,7 @@ def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5):
               and pending[-1].end - pending[0].start >= 1.0):
             # A measured breath can end a readable phrase even without commas.
             flush()
-        if pending and (len(join_words(pending + [word])) > max_chars or end - pending[0].start > max_duration):
+        if pending and (display_length(join_words(pending + [word])) > max_chars or end - pending[0].start > max_duration):
             boundary = next((n+1 for n in range(len(pending)-1, -1, -1)
                              if punctuation_boundary(pending[n].text,
                                  pending[n+1].text if n+1 < len(pending) else word.text)), None)
@@ -215,7 +236,7 @@ def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5):
                 del pending[boundary:]
                 flush()
                 pending.extend(rest)
-            if pending and (len(join_words(pending + [word])) > max_chars or end - pending[0].start > max_duration):
+            if pending and (display_length(join_words(pending + [word])) > max_chars or end - pending[0].start > max_duration):
                 flush()
         pending.append(word)
         last_end = end
