@@ -148,6 +148,13 @@ def main():
         assert place(overlap_job,resolve) == track+1
         assert contents() == expected(rows+later_rows)
         assert state() == before
+        # Resegmentation can replace one owned caption by two on the same track.
+        split_rows=[dict(start=1.4,end=1.68,text='只修改'),dict(start=1.68,end=2,text='第二次字幕')]
+        write_json(second_job/'result.json',dict(captions=split_rows,duration=8.68,offset=0,resegment=True))
+        assert sync(second_job,resolve)==track
+        assert contents()==expected(rows+split_rows)
+        assert timeline.GetTrackCount('subtitle')==track+1
+        assert state()==before
         print(json.dumps(dict(automatic_placement=True, same_timeline=True, original_media_unchanged=True, duplicate_prevented=True, captions=len(rows))))
     finally:
         manager.CloseProject(temporary)

@@ -3,7 +3,8 @@ import json
 import math
 from pathlib import Path
 from .storage import write_json
-from .subtitles import validate_captions
+from .subtitles import validate_captions, Word, make_captions, aligned_text_words
+from dataclasses import asdict
 
 
 def aligned_bounds(tokens,left,right,original):
@@ -46,6 +47,24 @@ def reconcile(original,proposed,failed,tail,duration,fps):
     return rows,sorted(failed)
 
 
+def split_aligned(row, words, max_chars, fps):
+    """Split using measured word boundaries; preserve the caption's outer span."""
+    captions = make_captions(words, max_chars=max_chars)
+    if len(captions) <= 1:
+        return [dict(row)]
+    result = [asdict(c) for c in captions]
+    for part in result:
+        part['start'] = max(row['start'], round(part['start']*fps)/fps)
+        part['end'] = min(row['end'], round(part['end']*fps)/fps)
+    result[0]['start'] = row['start']
+    result[-1]['end'] = row['end']
+    validate_captions(result)
+    normalize = lambda text: ''.join(text.split())
+    if normalize(''.join(c['text'] for c in result)) != normalize(row['text']):
+        raise ValueError('重新断句不能丢失或改变字幕文字')
+    return result
+
+
 def run(directory):
     from .models import cache_lock,ensure,ALIGNER,MODELS
     from .reference import context
@@ -69,11 +88,11 @@ def run(directory):
         converter=OpenCC('t2s')
         audio,rate=decode(req['timeline'])
         origin=req['timeline']['offset'];duration=origin+req['timeline']['duration']
-        rows=req['rows'];proposed=[dict(r) for r in rows];failed=[]
+        rows=req['rows'];proposed=[dict(r) for r in rows];failed=[];measured={}
         for i,row in enumerate(rows):
             report(dict(state='running',message=f'正在对齐音频：{i+1} / {len(rows)}'))
             left=max(origin,row['start']-1);right=min(duration,row['end']+1)
-            if script:
+            if script or req.get('resegment'):
                 # Avoid transcribing neighbouring captions into this one.
                 if i:left=max(left,(rows[i-1]['end']+row['start'])/2)
                 if i+1<len(rows):right=min(right,(row['end']+rows[i+1]['start'])/2)
@@ -90,13 +109,30 @@ def run(directory):
                 else:
                     tokens=model.align(audio=(segment,rate),text=row['text'],language='Chinese')[0].items
                 start,end=aligned_bounds(tokens,left,right,row)
+                if req.get('resegment'):
+                    measured[i]=[Word(w.text,w.start+left,w.end+left) for w in aligned_text_words(tokens,text)]
                 proposed[i]['text']=text
                 if req.get('realign',True):proposed[i].update(start=start,end=end)
-            except (ValueError,IndexError):failed.append(i)
+            except (ValueError,IndexError) as error:
+                print(f'Alignment skipped {i+1}: {error}',flush=True)
+                failed.append(i)
         if req.get('realign',True):
             result,failed=reconcile(rows,proposed,failed,req['tail'],duration,req['timeline']['fps'])
         else:
             result=proposed
+            validate_captions(result)
+        if req.get('resegment'):
+            expanded=[];expanded_failed=[]
+            for i,row in enumerate(result):
+                if i in failed or i not in measured:
+                    expanded_failed.append(len(expanded));expanded.append(dict(row));continue
+                try:
+                    parts=split_aligned(row,measured[i],req.get('max_chars',20),req['timeline']['fps'])
+                except ValueError as error:
+                    print(f'Resegmentation skipped {i+1}: {error}',flush=True)
+                    expanded_failed.append(len(expanded));parts=[dict(row)]
+                expanded.extend(parts)
+            result=expanded;failed=expanded_failed
             validate_captions(result)
         write_json(directory/'result.json',dict(rows=result,failed=failed))
         report(dict(state='done',message=f'对齐完成，{len(failed)} 条保留原时间、需人工校对。'))

@@ -30,17 +30,17 @@ class RealignTests(unittest.TestCase):
         window=OptimizeWindow.__new__(OptimizeWindow)
         from unittest.mock import patch
         window.jobs=T(data='test-data')
-        window.items={'ScriptOptimize':T(Checked=True),'Realign':T(Checked=False),'Tail':T(Value=.15)}
+        window.items={'ScriptOptimize':T(Checked=True),'Realign':T(Checked=False),'Tail':T(Value=.15),'Resegment':T(Checked=False),'SegmentChars':T(Value=20)}
         with patch('vincisub.optimize_ui.reference.load') as load:
             load.return_value=dict(text='参考稿',enabled=False)
             key=window.key({'track':1})
-            self.assertEqual(key[-1],'参考稿')
+            self.assertEqual(key[4],'参考稿')
             load.return_value=dict(text='新参考稿',enabled=True)
             self.assertNotEqual(key,window.key({'track':1}))
             load.return_value=dict(text='',enabled=True)
             with self.assertRaisesRegex(ValueError,'主面板'):window.key({'track':1})
             window.items['ScriptOptimize'].Checked=False
-            self.assertEqual(window.key({'track':1})[-1],'')
+            self.assertEqual(window.key({'track':1})[4],'')
 
     def test_cancel_stops_computation_without_applying(self):
         from unittest.mock import Mock

@@ -98,6 +98,8 @@ def main():
         ui.QueueEvent(widgets['Refresh'], 'Clicked', {})
         time.sleep(.5)
         assert all(widgets['Track'].TopLevelItem(n).CheckState[0] == 'Checked' for n in range(2))
+        timeline.SetMarkInOut(25,124)
+        assert selection(timeline)['offset']==1.0
         ui.QueueEvent(widgets['Generate'], 'Clicked', {})
         deadline = time.monotonic() + 120
         from vincisub.storage import DATA
@@ -270,7 +272,7 @@ def main():
         opt['OptimizeTrack'].CurrentIndex=track_count-1
         opt['StripPunctuation'].Checked=True;opt['FillGaps'].Checked=True
         ui.QueueEvent(opt['FillGaps'],'Clicked',{});time.sleep(.2)
-        assert '将修改' in opt['OptimizeStatus'].Text,opt['OptimizeStatus'].Text
+        assert '优化后' in opt['OptimizeStatus'].Text,opt['OptimizeStatus'].Text
         ui.QueueEvent(opt['CancelOptimize'],'Clicked',{});time.sleep(.2)
         assert read_all(resolve)['rows']==before_opt['rows']
         ui.QueueEvent(widgets['Optimize'],'Clicked',{});time.sleep(.2)
@@ -316,6 +318,46 @@ def main():
         assert timeline.GetTrackCount('subtitle')==other_track
         time.sleep(1)
         assert widgets['Captions'].TopLevelItemCount()==len(final_contents)+1
+        # Full native resegmentation: one real spoken caption -> multiple cues,
+        # with preview-only computation and application to the same subtitle track.
+        from vincisub.storage import write_json
+        from vincisub.placement import place
+        fixture=DATA/'jobs'/uuid.uuid4().hex
+        text='大家好，欢迎使用中文字幕工具。今天我们测试语音识别，并把生成的字幕导入达芬奇。'
+        write_json(fixture/'resolve.json',dict(project_id=temporary.GetUniqueId(),timeline_id=timeline.GetUniqueId()))
+        write_json(fixture/'result.json',dict(captions=[dict(start=0,end=8.68,text=text)],duration=8.68,offset=0))
+        split_track=place(fixture,resolve)
+        before_split=read_all(resolve)
+        widgets['Track'].TopLevelItem(0).CheckState[0]='Checked'
+        widgets['Track'].TopLevelItem(1).CheckState[0]='Unchecked'
+        ui.QueueEvent(widgets['ReadAll'],'Clicked',{});time.sleep(.5)
+        ui.QueueEvent(widgets['Optimize'],'Clicked',{});time.sleep(.3)
+        opt['OptimizeTrack'].CurrentIndex=split_track-1
+        opt['Realign'].Checked=False;opt['Resegment'].Checked=True
+        opt['TrimEnding'].Checked=True
+        ui.QueueEvent(opt['Resegment'],'Clicked',{});time.sleep(.2)
+        assert opt['ApplyOptimize'].Text=='计算重新断句'
+        ui.QueueEvent(opt['ApplyOptimize'],'Clicked',{})
+        deadline=time.monotonic()+120
+        while time.monotonic()<deadline:
+            time.sleep(.3)
+            if opt['ApplyOptimize'].Text=='应用并同步':break
+        assert opt['ApplyOptimize'].Text=='应用并同步',opt['OptimizeStatus'].Text
+        assert '重新断句后的字幕' in opt['OptimizePreview'].PlainText,opt['OptimizeStatus'].Text
+        assert read_all(resolve)==before_split
+        ui.QueueEvent(opt['ApplyOptimize'],'Clicked',{})
+        deadline=time.monotonic()+30
+        while time.monotonic()<deadline:
+            time.sleep(.3)
+            after_split=read_all(resolve)
+            if len(after_split['tracks'][split_track]['captions'])>1 and not widgets['Cancel'].Enabled:break
+        split_rows=after_split['tracks'][split_track]['captions']
+        assert len(split_rows)>1
+        assert split_rows[0]['start']==0 and split_rows[-1]['end']==8.68
+        assert all(not r['text'].endswith(('，','。')) for r in split_rows)
+        assert timeline.GetTrackCount('subtitle')==split_track
+        for n,source in before_split['tracks'].items():
+            if n!=split_track:assert after_split['tracks'][n]==source
         ui.QueueEvent(window, 'Close', {'close':True})
         deadline = time.monotonic()+5
         while ui.FindWindow('com.vincisub.native') and time.monotonic()<deadline:

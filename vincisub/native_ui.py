@@ -311,6 +311,10 @@ def launch(resolve, fusion, bmd):
             jobs.save(rows,jobs.result().get('offset',0))
             state['rows']=rows
             render_rows()
+        if source.get('resegment'):
+            result=jobs.result()
+            result['resegment']=True
+            write_json(jobs.directory/'result.json',result)
         import_result()
 
     def prepare_alignment(source):

@@ -165,3 +165,28 @@ class EditingTests(unittest.TestCase):
                 imported.assert_called_once()
             t.DeleteClips.assert_not_called()
             t.SetTrackEnable.assert_any_call('subtitle',2,True)
+
+    @patch('vincisub.editing.time.sleep')
+    def test_resegmentation_changes_count_only_when_explicit_and_keeps_other_owned_content(self,sleep):
+        with tempfile.TemporaryDirectory() as folder:
+            d=Path(folder);r,p,t,items,tracks=self.scene(d)
+            receipt=json.loads((d/'placement-receipt.json').read_text())
+            receipt['owned_indices']=[0]
+            (d/'placement-receipt.json').write_text(json.dumps(receipt))
+            result=json.loads((d/'result.json').read_text())
+            result['captions']=[dict(start=2,end=2.4,text='第一段'),dict(start=2.4,end=3,text='第二段')]
+            (d/'result.json').write_text(json.dumps(result))
+            with self.assertRaisesRegex(ValueError,'增删'):sync(d,r)
+            t.DeleteClips.assert_not_called()
+            result['resegment']=True
+            (d/'result.json').write_text(json.dumps(result))
+            parts=[]
+            for n,row in enumerate(result['captions']):
+                item=MagicMock();item.GetUniqueId.return_value='split'+str(n);item.GetName.return_value=row['text']
+                item.GetStart.return_value=90001+round(row['start']*25);item.GetEnd.return_value=90001+round(row['end']*25)
+                parts.append(item)
+            p.GetMediaPool.return_value.AppendToTimeline.side_effect=lambda _:tracks[2].extend(parts+[items[1]])
+            with patch('vincisub.editing.import_media',return_value=[object()]):self.assertEqual(sync(d,r),2)
+            self.assertEqual(tracks[2],parts+[items[1]])
+            new=json.loads((d/'placement-receipt.json').read_text())
+            self.assertEqual(new['owned_indices'],[0,1])

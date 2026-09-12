@@ -44,7 +44,7 @@ def sync(directory, resolve=None, append_from=None):
     if append_from:
         preserved = [v[1:] for v in old]
     else:
-        if len(new_rows) != len(owned):
+        if len(new_rows) != len(owned) and not result.get('resegment',False):
             raise ValueError('当前只支持修改已有字幕，不能增删行。')
         preserved = [v[1:] for n,v in enumerate(old) if n not in owned]
     tagged = sorted([(v,False) for v in preserved] + [(v,True) for v in new_rows], key=lambda v:v[0][0])

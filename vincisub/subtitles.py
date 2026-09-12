@@ -91,6 +91,51 @@ def merge_instant_words(words):
     return result
 
 
+def punctuation_boundary(text):
+    text = text.rstrip().rstrip('”’」』》〉】〕）)]}' + chr(34) + chr(39))
+    if re.search(r'[。！？!?]$', text):
+        return 'hard'
+    if re.search(r'[，,；;]$', text):
+        return 'soft'
+    # Decimal numbers are not sentence boundaries.
+    if text.endswith('.') and not re.search(r'\d\.$', text):
+        return 'hard'
+    return None
+
+
+def aligned_text_words(tokens, text):
+    """Attach punctuation and quotes to measured words without changing text."""
+    words = []
+    cursor = 0
+    prefix = ''
+    for token in tokens:
+        value = token.text.strip()
+        if not value:
+            continue
+        position = text.find(value, cursor)
+        if position < 0:
+            raise ValueError('对齐词语与字幕文字不一致')
+        between = text[cursor:position]
+        if any(c.isalnum() for c in between):
+            raise ValueError('对齐遗漏字幕文字')
+        if words:
+            old = words.pop()
+            # Opening quotes belong to the next word; closing quotes to the last.
+            split = next((i for i,c in enumerate(between) if c in '“‘「『（('), len(between))
+            words.append(Word(old.text + between[:split], old.start, old.end))
+            prefix = between[split:]
+        else:
+            prefix = between
+        words.append(Word(prefix + value, float(token.start_time), float(token.end_time)))
+        cursor = position + len(value)
+    suffix = text[cursor:]
+    if not words or any(c.isalnum() for c in suffix):
+        raise ValueError('对齐遗漏字幕文字')
+    old = words.pop()
+    words.append(Word(old.text + suffix, old.start, old.end))
+    return words
+
+
 def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5):
     if not 6 <= max_chars <= 60:
         raise ValueError("每条字数需在 6–60 之间。")
@@ -102,7 +147,8 @@ def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5):
             pending.clear()
 
     last_end = 0.0
-    for word in merge_instant_words(words):
+    measured = merge_instant_words(words)
+    for word in measured:
         if not word.text.strip():
             continue
         if not all(math.isfinite(t) for t in (word.start, word.end)) or word.start < 0 or word.end <= word.start:
@@ -113,12 +159,30 @@ def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5):
         if end <= start:
             raise ValueError("识别时间戳发生倒序，无法可靠生成字幕。")
         word = Word(word.text, start, end)
-        if pending and (start - pending[-1].end >= gap or len(join_words(pending + [word])) > max_chars or end - pending[0].start > max_duration):
+        if pending and start - pending[-1].end >= gap:
             flush()
+        if pending and (len(join_words(pending + [word])) > max_chars or end - pending[0].start > max_duration):
+            boundary = next((n+1 for n in range(len(pending)-1, -1, -1)
+                             if punctuation_boundary(pending[n].text)), None)
+            if boundary:
+                rest = pending[boundary:]
+                del pending[boundary:]
+                flush()
+                pending.extend(rest)
+            if pending and (len(join_words(pending + [word])) > max_chars or end - pending[0].start > max_duration):
+                flush()
         pending.append(word)
         last_end = end
-        if re.search(r"[。！？!?；;]$", word.text) or (re.search(r"[，,]$", word.text) and len(join_words(pending)) >= 8):
+        boundary = punctuation_boundary(word.text)
+        if boundary == 'hard':
             flush()
+        elif boundary == 'soft':
+            text = join_words(pending)
+            # Short introductory words can stay with the following clause. Longer
+            # spoken clauses break at the comma instead of accumulating commas.
+            length = sum(c.isalnum() for c in text)
+            if length >= 4 or pending[-1].end - pending[0].start >= 1.0:
+                flush()
     flush()
     return validate_captions([asdict(c) for c in captions]) if captions else []
 

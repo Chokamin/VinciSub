@@ -3,7 +3,6 @@
 import argparse
 import json
 import os
-import re
 import shutil
 import traceback
 from dataclasses import asdict
@@ -11,7 +10,7 @@ from pathlib import Path
 
 from .audio import chunks, normalize
 from .storage import DATA, write_json
-from .subtitles import Word, make_captions
+from .subtitles import Word, make_captions, aligned_text_words
 from .reference import context
 
 
@@ -20,18 +19,8 @@ from .models import MODELS, ALIGNER, ensure, cache_lock
 
 def with_punctuation(items, text, convert):
     """Recover punctuation from the transcript without changing aligned words."""
-    cursor = 0
-    for item in items:
-        token = item.text.strip()
-        position = text.find(token, cursor)
-        suffix = ""
-        if position >= 0:
-            cursor = position + len(token)
-            match = re.match(r"[，。！？；：、,.!?;:]+", text[cursor:])
-            if match:
-                suffix = match.group()
-                cursor += len(suffix)
-        yield Word(convert(token + suffix), float(item.start_time), float(item.end_time))
+    for word in aligned_text_words(items, text):
+        yield Word(convert(word.text), word.start, word.end)
 
 
 def recognize_with_reference_fallback(recognize,hints,request,warnings):
