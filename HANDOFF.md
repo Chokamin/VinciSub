@@ -72,11 +72,11 @@
 - 变速仅首尾映射，速度曲线需校对；倒放、嵌套/复合及外部同步音频映射明确拒绝。单次范围最长 30 分钟；大批量逐条落轨耗时待验证。
 - 模型仅 Apple Silicon / Qwen 0.6B MPS 实测，1.7B 未实测。用户真实项目未写入测试素材。
 
-- 2026-09-12：v0.2.0 发布准备完成，版本和发布说明已更新；131 项测试通过，待推送标签、创建 Release 与在线更新验证。
+- 2026-09-12：v0.2.0 已正式发布，标签指向 53fd06f；131 项测试通过。真实公开更新接口已验证：v0.1.0 发现 v0.2.0，v0.2.0 显示无需更新。升级需重装依赖（新增 jieba），保留 .vincisub 用户数据。
 
 ## 阻塞点
 
-- GitHub 发布已完成：https://github.com/Chokamin/VinciSub/releases/tag/v0.1.0；当前无发布阻塞。
+- GitHub 最新发布已完成：https://github.com/Chokamin/VinciSub/releases/tag/v0.2.0；当前无发布阻塞。
 
 - 已移除旧 Helper 的全部生产调用及 Swift 源码。直接 API 写入不再受系统辅助功能或自动化授权阻塞。旧 `.vincisub/bin/` Helper 缓存不再执行。
 
