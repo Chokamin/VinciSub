@@ -1,4 +1,4 @@
-"""Subtitle timing and SRT serialization. No model/runtime dependencies."""
+"""Subtitle timing, local lexical boundaries and SRT serialization."""
 
 import math
 import re
@@ -91,7 +91,10 @@ def merge_instant_words(words):
     return result
 
 
-def punctuation_boundary(text):
+def punctuation_boundary(text, next_text=''):
+    # A comma inside a number is not a spoken clause boundary.
+    if re.search(r'\d,$', text.rstrip()) and re.match(r'\d', next_text.lstrip()):
+        return None
     text = text.rstrip().rstrip('”’」』》〉】〕）)]}' + chr(34) + chr(39))
     if re.search(r'[。！？!?]$', text):
         return 'hard'
@@ -136,6 +139,25 @@ def aligned_text_words(tokens, text):
     return words
 
 
+def lexical_words(words, gap):
+    """Join measured Chinese characters inside dictionary words, not silences."""
+    text = ''.join(w.text.strip() for w in words)
+    if not re.search(r'[\u3400-\u9fff]', text):
+        return words
+    import jieba
+    jieba.setLogLevel(40)
+    boundaries = {end for _, _, end in jieba.tokenize(text, HMM=False)}
+    result, pending, cursor = [], [], 0
+    for i, word in enumerate(words):
+        pending.append(word)
+        cursor += len(word.text.strip())
+        if (cursor in boundaries or i+1 == len(words)
+                or words[i+1].start-word.end >= gap):
+            result.append(Word(join_words(pending), pending[0].start, pending[-1].end))
+            pending = []
+    return result
+
+
 def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5):
     if not 6 <= max_chars <= 60:
         raise ValueError("每条字数需在 6–60 之间。")
@@ -147,8 +169,17 @@ def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5):
             pending.clear()
 
     last_end = 0.0
-    measured = merge_instant_words(words)
-    for word in measured:
+    normalized = []
+    for word in merge_instant_words(words):
+        start = max(last_end, round(word.start, 3))
+        end = round(word.end, 3)
+        if end <= start:
+            raise ValueError("识别时间戳发生倒序，无法可靠生成字幕。")
+        normalized.append(Word(word.text, start, end))
+        last_end = end
+    measured = lexical_words(normalized, gap)
+    last_end = 0.0
+    for index, word in enumerate(measured):
         if not word.text.strip():
             continue
         if not all(math.isfinite(t) for t in (word.start, word.end)) or word.start < 0 or word.end <= word.start:
@@ -161,9 +192,24 @@ def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5):
         word = Word(word.text, start, end)
         if pending and start - pending[-1].end >= gap:
             flush()
+        elif (pending and start - pending[-1].end >= min(gap, .25)
+              and sum(c.isalnum() for c in join_words(pending)) >= 6
+              and pending[-1].end - pending[0].start >= 1.0):
+            # A measured breath can end a readable phrase even without commas.
+            flush()
         if pending and (len(join_words(pending + [word])) > max_chars or end - pending[0].start > max_duration):
             boundary = next((n+1 for n in range(len(pending)-1, -1, -1)
-                             if punctuation_boundary(pending[n].text)), None)
+                             if punctuation_boundary(pending[n].text,
+                                 pending[n+1].text if n+1 < len(pending) else word.text)), None)
+            if boundary is None:
+                # Near the limit, prefer a real pause with useful text on both
+                # sides. Do not manufacture semantic or proportional timings.
+                candidates = [n for n in range(1, len(pending))
+                              if pending[n].start - pending[n-1].end >= .12
+                              and sum(c.isalnum() for c in join_words(pending[:n])) >= 3
+                              and sum(c.isalnum() for c in join_words(pending[n:] + [word])) >= 3]
+                boundary = max(candidates, key=lambda n: pending[n].start-pending[n-1].end,
+                               default=None)
             if boundary:
                 rest = pending[boundary:]
                 del pending[boundary:]
@@ -173,7 +219,7 @@ def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5):
                 flush()
         pending.append(word)
         last_end = end
-        boundary = punctuation_boundary(word.text)
+        boundary = punctuation_boundary(word.text, measured[index+1].text if index+1 < len(measured) else '')
         if boundary == 'hard':
             flush()
         elif boundary == 'soft':
@@ -185,6 +231,16 @@ def make_captions(words, max_chars=20, max_duration=5.0, gap=0.5):
                 flush()
     flush()
     return validate_captions([asdict(c) for c in captions]) if captions else []
+
+
+def bridge_brief_gaps(captions, max_gap=.2):
+    """Keep text visible across tiny gaps; leave onsets and long pauses intact."""
+    result = list(captions)
+    for i in range(len(result)-1):
+        current, following = result[i:i+2]
+        if 0 < following.start-current.end <= max_gap+1e-9:
+            result[i] = Caption(current.start, following.start, current.text)
+    return result
 
 
 def timestamp(seconds):

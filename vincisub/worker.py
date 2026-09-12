@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .audio import chunks, normalize
 from .storage import DATA, write_json
-from .subtitles import Word, make_captions, aligned_text_words
+from .subtitles import Word, make_captions, aligned_text_words, bridge_brief_gaps
 from .reference import context
 
 
@@ -100,7 +100,7 @@ def run(job_dir):
         words.extend(recognize_with_reference_fallback(recognize,hints,request,warnings))
     if any(word.start == word.end for word in words):
         warnings.append('部分词语时间戳已合并到相邻词语，请校对这些字幕的起止时间。')
-    captions = make_captions(words, max_chars=request["max_chars"])
+    captions = bridge_brief_gaps(make_captions(words, max_chars=request["max_chars"]))
     if not captions:
         raise ValueError("没有识别到人声。请检查音轨或换一段清晰的人声录音。")
     rows = [asdict(c) for c in captions]

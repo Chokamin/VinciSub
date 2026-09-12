@@ -7,7 +7,7 @@ name = "vincisub"
 version = "0.1.0"
 description = "Native DaVinci Resolve script for local Chinese subtitles"
 requires-python = ">=3.12,<3.14"
-dependencies = ["qwen-asr==0.0.6", "opencc-python-reimplemented==0.1.7"]
+dependencies = ["qwen-asr==0.0.6", "opencc-python-reimplemented==0.1.7", "jieba==0.42.1"]
 
 [tool.setuptools.packages.find]
 include = ["vincisub*"]

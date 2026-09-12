@@ -3,7 +3,7 @@ import json
 import math
 from pathlib import Path
 from .storage import write_json
-from .subtitles import validate_captions, Word, make_captions, aligned_text_words
+from .subtitles import validate_captions, Word, make_captions, aligned_text_words, bridge_brief_gaps
 from dataclasses import asdict
 
 
@@ -49,7 +49,7 @@ def reconcile(original,proposed,failed,tail,duration,fps):
 
 def split_aligned(row, words, max_chars, fps):
     """Split using measured word boundaries; preserve the caption's outer span."""
-    captions = make_captions(words, max_chars=max_chars)
+    captions = bridge_brief_gaps(make_captions(words, max_chars=max_chars))
     if len(captions) <= 1:
         return [dict(row)]
     result = [asdict(c) for c in captions]
