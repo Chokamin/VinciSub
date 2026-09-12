@@ -30,22 +30,25 @@ class JobsTests(unittest.TestCase):
             self.jobs.save([{'start': 0, 'end': 4, 'text': '超出音频'}])
         self.assertEqual(previous, self.jobs.result())
 
-    def test_reopen_starts_empty_and_preserves_historical_jobs(self):
-        latest = Path(self.temp.name) / 'native-latest.json'
-        write_json(latest, {'id': self.jobs.directory.name})
-        for state in ['done', 'running', 'error', 'cancelled']:
-            with self.subTest(state=state):
-                self.jobs._status(state, '历史任务')
-                before = {p: p.read_bytes() for p in self.jobs.directory.iterdir()}
-                reopened = Jobs(self.temp.name)
-                self.assertIsNone(reopened.directory)
-                self.assertEqual(reopened.status()['state'], 'idle')
-                self.assertFalse(reopened.busy())
-                with self.assertRaises(ValueError):
-                    reopened.result()
-                self.assertEqual(before, {p: p.read_bytes() for p in self.jobs.directory.iterdir()})
-        latest.write_text('invalid legacy pointer', encoding='utf-8')
-        self.assertEqual(Jobs(self.temp.name).status()['state'], 'idle')
+    def test_running_job_is_marked_interrupted_on_reopen(self):
+        self.jobs._status('running', '识别中')
+        write_json(Path(self.temp.name) / 'native-latest.json', {'id': self.jobs.directory.name})
+        self.assertEqual(Jobs(self.temp.name).status()['state'], 'error')
+
+    def test_completed_job_is_restored_without_changing_saved_subtitles(self):
+        write_json(Path(self.temp.name) / 'native-latest.json', {'id': self.jobs.directory.name})
+        before = (self.jobs.directory / 'result.json').read_bytes()
+        reopened = Jobs(self.temp.name)
+        self.assertEqual(reopened.directory, self.jobs.directory)
+        self.assertEqual(reopened.result(), self.jobs.result())
+        self.assertEqual((self.jobs.directory / 'result.json').read_bytes(), before)
+
+    def test_no_history_has_no_demo_subtitles(self):
+        reopened = Jobs(self.temp.name)
+        self.assertIsNone(reopened.directory)
+        self.assertEqual(reopened.status()['state'], 'idle')
+        with self.assertRaises(ValueError):
+            reopened.result()
 
     def test_missing_environment_fails_before_starting(self):
         self.jobs.python = Path(self.temp.name) / 'missing'

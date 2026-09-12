@@ -73,10 +73,6 @@ def main():
             window = ui.FindWindow('com.vincisub.native')
         assert window, 'Native window failed to open'
         widgets = window.GetItems()
-        time.sleep(1)  # Include timer polls: they must not reload a historical job.
-        assert widgets['Captions'].TopLevelItemCount() == 0, 'Startup restored stale subtitles'
-        assert widgets['Status'].Text.startswith('就绪。'), widgets['Status'].Text
-        assert not widgets['Export'].Enabled and not widgets['Import'].Enabled
         ui.QueueEvent(widgets['VocabularySettings'],'Clicked',{})
         time.sleep(.3)
         vocabulary_window=ui.FindWindow('com.vincisub.native.vocabulary')

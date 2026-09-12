@@ -21,9 +21,16 @@ class Jobs:
         self.jobs.mkdir(parents=True, exist_ok=True)
         self.python = Path(python) if python else ROOT / ".venv/bin/python"
         self.process = None
-        # A new panel starts empty. Historical jobs remain on disk for receipts,
-        # track reuse and rollback, but are never selected implicitly at startup.
         self.directory = None
+        latest = self.data / "native-latest.json"
+        if latest.exists():
+            identifier = json.loads(latest.read_text(encoding="utf-8")).get("id", "")
+            if len(identifier) == 32 and all(c in "0123456789abcdef" for c in identifier):
+                candidate = self.jobs / identifier
+                if (candidate / "status.json").is_file():
+                    self.directory = candidate
+                    if self.status()["state"] == "running":
+                        self._status("error", "上次任务已中断，请重新生成。")
 
     def busy(self):
         return self.process is not None and self.process.poll() is None
