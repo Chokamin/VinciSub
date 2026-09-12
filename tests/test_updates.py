@@ -60,3 +60,11 @@ class UpdateTests(unittest.TestCase):
     def test_published_source(self):
         from vincisub.storage import ROOT
         self.assertEqual(json.loads((ROOT/'update-source.json').read_text())['repository'], 'Chokamin/VinciSub')
+
+    def test_current_release_is_detectable_by_previous_version(self):
+        from vincisub.storage import ROOT
+        notes = (ROOT/'RELEASE_NOTES.md').read_text(encoding='utf-8')
+        self.assertIn('v' + __version__, notes.splitlines()[0])
+        result = check(self.root, '0.1.0', self.fetch('v' + __version__))
+        self.assertTrue(result['url'].endswith('/v' + __version__))
+        self.assertFalse(check(self.root, __version__, self.fetch('v' + __version__))['url'])
